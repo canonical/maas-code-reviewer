@@ -12,7 +12,7 @@ import sys
 import tempfile
 from concurrent import futures
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from itertools import chain
 from pathlib import Path
 from random import shuffle
@@ -431,7 +431,7 @@ def set_milestone_on_task(project, task):
     task_milestone = task.milestone
     if task_milestone is not None:
         return
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     target_milestone = find_target_milestone(project, now)
     task.milestone = target_milestone
 
