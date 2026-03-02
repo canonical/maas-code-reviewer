@@ -272,6 +272,52 @@ class TestReviewDiff:
         )
         assert "fine" in result
 
+    def test_tool_read_file_returns_error_for_missing_file(self) -> None:
+        rf = _make_read_file({"existing.py": "content"})
+        ld = _make_list_directory()
+
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="File was missing.",
+                    tool_calls=[
+                        ToolCall(name="read_file", args={"path": "missing.py"}),
+                    ],
+                ),
+            ]
+        )
+        result = review_diff(
+            llm,
+            diff="d",
+            description=None,
+            read_file=rf,
+            list_directory=ld,
+        )
+        assert "File was missing." in result
+
+    def test_tool_list_directory_returns_error_for_missing_dir(self) -> None:
+        rf = _make_read_file()
+        ld = _make_list_directory({"src": ["main.py"]})
+
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="Dir was missing.",
+                    tool_calls=[
+                        ToolCall(name="list_directory", args={"path": "nope"}),
+                    ],
+                ),
+            ]
+        )
+        result = review_diff(
+            llm,
+            diff="d",
+            description=None,
+            read_file=rf,
+            list_directory=ld,
+        )
+        assert "Dir was missing." in result
+
     def test_empty_diff(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="No changes.")])
         result = review_diff(

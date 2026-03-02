@@ -9,6 +9,7 @@ from lp_ci_tools.cli import (
     REVIEW_MARKER,
     MergeProposalSummary,
     _build_parser,
+    _lp_repo_url,
     _ref_to_branch,
     format_merge_proposals,
     has_existing_review,
@@ -21,7 +22,7 @@ from tests.factory import make_mp
 from tests.fake_git import FakeGitClient
 from tests.fake_launchpad import FakeLaunchpadClient
 from tests.fake_launchpadlib import FakeLaunchpad, make_fake_comment, make_fake_mp
-from tests.fake_llm import FakeLLMClient, ScriptedResponse
+from tests.fake_llm import FakeLLMClient, ScriptedResponse, ToolCall
 
 
 class TestListMergeProposals:
@@ -429,6 +430,16 @@ class TestMain:
         assert review_date.isoformat() in captured.out
 
 
+class TestLpRepoUrl:
+    def test_prepends_git_base(self) -> None:
+        result = _lp_repo_url("~user/project/+git/repo")
+        assert result == "https://git.launchpad.net/~user/project/+git/repo"
+
+    def test_plain_name(self) -> None:
+        result = _lp_repo_url("myproject")
+        assert result == "https://git.launchpad.net/myproject"
+
+
 class TestRefToBranch:
     def test_strips_refs_heads_prefix(self) -> None:
         assert _ref_to_branch("refs/heads/feature") == "feature"
@@ -722,6 +733,111 @@ class TestReviewMergeProposal:
 
         assert result is not None
         assert "Reviewed with context." in result
+
+    def test_read_file_tool_returns_error_for_missing_file(
+        self, tmp_path: Path
+    ) -> None:
+        """The read_file tool returns an error string for nonexistent files."""
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="File missing, moving on.",
+                    tool_calls=[
+                        ToolCall(
+                            name="read_file",
+                            args={"path": "nonexistent.py"},
+                        ),
+                    ],
+                ),
+            ]
+        )
+
+        result = review_merge_proposal(lp, git, llm, mp.url, repo_url_fn=str)
+
+        assert result is not None
+        assert "File missing, moving on." in result
+
+    def test_tools_provided_to_llm_can_list_directory(self, tmp_path: Path) -> None:
+        """The list_directory tool provided to the LLM can list repo contents."""
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(
+            tmp_path,
+            git,
+            target_files={"src/main.py": "print('hi')\n", "src/utils.py": "pass\n"},
+            source_files={"src/main.py": "print('hello')\n"},
+        )
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="Checked src directory.",
+                    tool_calls=[
+                        ToolCall(name="list_directory", args={"path": "src"}),
+                    ],
+                ),
+            ]
+        )
+
+        result = review_merge_proposal(lp, git, llm, mp.url, repo_url_fn=str)
+
+        assert result is not None
+        assert "Checked src directory." in result
+
+    def test_list_directory_tool_returns_error_for_missing_dir(
+        self, tmp_path: Path
+    ) -> None:
+        """The list_directory tool returns an error for nonexistent directories."""
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="Dir not found, continuing.",
+                    tool_calls=[
+                        ToolCall(
+                            name="list_directory",
+                            args={"path": "nonexistent"},
+                        ),
+                    ],
+                ),
+            ]
+        )
+
+        result = review_merge_proposal(lp, git, llm, mp.url, repo_url_fn=str)
+
+        assert result is not None
+        assert "Dir not found, continuing." in result
 
     def test_review_comment_has_correct_format(self, tmp_path: Path) -> None:
         """The posted comment starts with the marker, then blank line, then review."""

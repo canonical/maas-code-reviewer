@@ -217,6 +217,37 @@ class TestGetComments:
         assert result[1].author == "bob"
 
 
+class TestPostComment:
+    def test_post_comment_adds_comment(self) -> None:
+        fake_lp = FakeLaunchpad(bot_username="ci-bot")
+        mp = make_fake_mp()
+        fake_lp.add_merge_proposal("myproject", mp)
+        client = _make_client(fake_lp)
+
+        client.post_comment(mp.self_link, "Great work!", subject="Review")
+
+        result = client.get_comments(mp.self_link)
+        assert len(result) == 1
+        assert result[0].author == "ci-bot"
+        assert result[0].body == "Great work!"
+
+    def test_post_comment_appends_to_existing(self) -> None:
+        fake_lp = FakeLaunchpad(bot_username="ci-bot")
+        mp = make_fake_mp()
+        fake_lp.add_merge_proposal("myproject", mp)
+        existing = make_fake_comment(author="alice", body="First comment")
+        fake_lp.add_comment(mp.web_link, existing)
+        client = _make_client(fake_lp)
+
+        client.post_comment(mp.self_link, "Bot comment", subject="Review")
+
+        result = client.get_comments(mp.self_link)
+        assert len(result) == 2
+        assert result[0].author == "alice"
+        assert result[1].author == "ci-bot"
+        assert result[1].body == "Bot comment"
+
+
 class TestGetBotUsername:
     def test_returns_bot_username(self) -> None:
         fake_lp = FakeLaunchpad(bot_username="ci-bot")

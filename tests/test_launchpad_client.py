@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from lp_ci_tools.models import Comment, MergeProposal
+import pytest
+
+from lp_ci_tools.models import Comment
 from tests.factory import make_mp
 from tests.fake_launchpad import FakeLaunchpadClient
 
@@ -106,12 +108,8 @@ class TestGetMergeProposal:
         mp = make_mp()
         client.add_merge_proposal(mp)
 
-        try:
+        with pytest.raises(KeyError):
             client.get_merge_proposal("https://example.com/unknown")
-            raised = False
-        except KeyError:
-            raised = True
-        assert raised
 
 
 class TestGetComments:
@@ -218,12 +216,8 @@ class TestGetBotUsername:
 class TestDataModelsAreFrozen:
     def test_merge_proposal_is_frozen(self) -> None:
         mp = make_mp()
-        try:
+        with pytest.raises(AttributeError):
             mp.status = "Approved"  # type: ignore[misc]
-            raised = False
-        except AttributeError:
-            raised = True
-        assert raised
 
     def test_comment_is_frozen(self) -> None:
         comment = Comment(
@@ -231,9 +225,5 @@ class TestDataModelsAreFrozen:
             body="Hello",
             date=datetime(2025, 1, 15, 12, 0, 0, tzinfo=UTC),
         )
-        try:
+        with pytest.raises(AttributeError):
             comment.body = "Changed"  # type: ignore[misc]
-            raised = False
-        except AttributeError:
-            raised = True
-        assert raised

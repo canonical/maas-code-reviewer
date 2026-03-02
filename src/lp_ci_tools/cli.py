@@ -231,7 +231,7 @@ def main(argv: list[str] | None = None) -> None:
         if output:
             print(output)
 
-    elif args.command == "review":
+    elif args.command == "review":  # pragma: no cover
         lp_client = RealLaunchpadClient(credentials_file=args.launchpad_credentials)
         git_client = RealGitClient()
         api_key = Path(args.gemini_api_key_file).read_text().strip()

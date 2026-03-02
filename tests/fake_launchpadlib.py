@@ -64,12 +64,16 @@ class FakeMergeProposal:
     commit_message: str | None = None
     description: str | None = None
     all_comments: list[FakeComment] = field(default_factory=list)
+    _owner: FakeUser | None = field(default=None, repr=False)
 
     def createComment(self, *, subject: str, content: str) -> None:
-        raise NotImplementedError(
-            "createComment on FakeMergeProposal is not wired up — "
-            "add it to FakeLaunchpad.post_comment if needed"
+        author = self._owner or FakeUser(name="unknown")
+        comment = FakeComment(
+            author=author,
+            message_body=content,
+            date_created=datetime(2025, 1, 1, tzinfo=UTC),
         )
+        self.all_comments.append(comment)
 
     def getMergeProposals(self, status: str) -> list[FakeMergeProposal]:
         """Only here so the type looks right; real filtering is on FakeProject."""
@@ -120,6 +124,7 @@ class FakeLaunchpad:
     def add_merge_proposal(self, project_name: str, mp: FakeMergeProposal) -> None:
         if project_name not in self._projects:
             self.add_project(project_name)
+        mp._owner = self.me
         self._projects[project_name]._merge_proposals.append(mp)
         self._merge_proposals[mp.self_link] = mp
 

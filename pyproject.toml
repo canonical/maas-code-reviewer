@@ -9,9 +9,8 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "google-genai",
-    "keyring>=25.7.0",
-    "launchpadlib>=2.1.0",
-    "pyyaml>=6.0.3",
+    "keyring",
+    "launchpadlib",
 ]
 
 [project.scripts]
@@ -37,3 +36,17 @@ line-length = 88
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.coverage.run]
+source = ["src/lp_ci_tools", "tests"]
+omit = ["src/lp_ci_tools/main.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def _check_protocol_compliance",
+    "class GeminiClient",
+    "raise NotImplementedError",
+    "if __name__",
+    "raised = False",
+]
