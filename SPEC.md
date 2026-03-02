@@ -133,7 +133,7 @@ implementation uses `google.genai`; the fake returns canned responses.
 ### `lp-ci-tools list-merge-proposals`
 
 ```
-lp-ci-tools list-merge-proposals [--credentials FILE] --status STATUS PROJECT
+lp-ci-tools list-merge-proposals [--launchpad-credentials FILE] --status STATUS PROJECT
 ```
 
 Lists merge proposals for PROJECT filtered by STATUS. For each proposal,
@@ -143,7 +143,7 @@ this tool (or "never").
 ### `lp-ci-tools review`
 
 ```
-lp-ci-tools review [--credentials FILE] [--dry-run] MP_URL
+lp-ci-tools review [--launchpad-credentials FILE] -g KEY_FILE [--dry-run] MP_URL
 ```
 
 Reviews a single merge proposal:
@@ -159,7 +159,7 @@ Reviews a single merge proposal:
 ### `lp-ci-tools review-new`
 
 ```
-lp-ci-tools review-new [--credentials FILE] [--dry-run] --status STATUS PROJECT
+lp-ci-tools review-new [--launchpad-credentials FILE] -g KEY_FILE [--dry-run] --status STATUS PROJECT
 ```
 
 Combines list + review: finds all merge proposals matching STATUS for
@@ -441,8 +441,7 @@ reviewing, suitable for Jenkins.
 
 | Variable | Required | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | Yes (for review) | API key for the Gemini LLM. |
-| `LP_CREDENTIALS_FILE` | No | Path to launchpadlib credentials. Overridden by `--credentials`. |
+| `LP_CREDENTIALS_FILE` | No | Path to launchpadlib credentials. Overridden by `--launchpad-credentials`. |
 
 ## Dependencies (Final)
 

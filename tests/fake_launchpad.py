@@ -35,6 +35,12 @@ class FakeLaunchpadClient:
     # Protocol methods
     # ------------------------------------------------------------------
 
+    def get_merge_proposal(self, mp_url: str) -> MergeProposal:
+        for mp in self._proposals:
+            if mp.url == mp_url or mp.api_url == mp_url:
+                return mp
+        raise KeyError(f"No merge proposal with URL {mp_url!r}")
+
     def get_merge_proposals(self, project: str, status: str) -> list[MergeProposal]:
         return [
             mp

@@ -1,20 +1,27 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
 from lp_ci_tools.cli import (
+    REVIEW_MARKER,
     MergeProposalSummary,
     _build_parser,
+    _ref_to_branch,
     format_merge_proposals,
+    has_existing_review,
     list_merge_proposals,
     main,
+    review_merge_proposal,
 )
 from lp_ci_tools.models import Comment
 from tests.factory import make_mp
+from tests.fake_git import FakeGitClient
 from tests.fake_launchpad import FakeLaunchpadClient
 from tests.fake_launchpadlib import FakeLaunchpad, make_fake_comment, make_fake_mp
+from tests.fake_llm import FakeLLMClient, ScriptedResponse
 
 
 class TestListMergeProposals:
@@ -226,7 +233,7 @@ class TestBuildParser:
         assert args.command == "list-merge-proposals"
         assert args.status == "Needs review"
         assert args.project == "myproject"
-        assert args.credentials is None
+        assert args.launchpad_credentials is None
 
     def test_list_merge_proposals_parses_explicit_status(self) -> None:
         parser = _build_parser()
@@ -242,19 +249,117 @@ class TestBuildParser:
         args = parser.parse_args(
             [
                 "list-merge-proposals",
-                "--credentials",
+                "--launchpad-credentials",
                 "/path/to/creds",
                 "--status",
                 "Approved",
                 "myproject",
             ]
         )
-        assert args.credentials == "/path/to/creds"
+        assert args.launchpad_credentials == "/path/to/creds"
 
     def test_no_subcommand_gives_none(self) -> None:
         parser = _build_parser()
         args = parser.parse_args([])
         assert args.command is None
+
+    def test_review_parses_mp_url(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "-g",
+                str(key_file),
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.command == "review"
+        assert (
+            args.mp_url == "https://code.launchpad.net/~user/project/+git/repo/+merge/1"
+        )
+        assert args.dry_run is False
+        assert args.launchpad_credentials is None
+        assert args.gemini_api_key_file == str(key_file)
+        assert args.model == "gemini-3-flash-preview"
+
+    def test_review_parses_dry_run(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--dry-run",
+                "-g",
+                str(key_file),
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.dry_run is True
+
+    def test_review_parses_launchpad_credentials(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--launchpad-credentials",
+                "/path/to/creds",
+                "-g",
+                str(key_file),
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.launchpad_credentials == "/path/to/creds"
+
+    def test_review_parses_gemini_api_key_file(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "gemini.key"
+        key_file.write_text("my-secret-key\n")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--gemini-api-key-file",
+                str(key_file),
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.gemini_api_key_file == str(key_file)
+
+    def test_review_model_defaults_to_gemini_3_flash_preview(
+        self, tmp_path: Path
+    ) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "-g",
+                str(key_file),
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.model == "gemini-3-flash-preview"
+
+    def test_review_parses_model(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--model",
+                "gemini-2.5-pro",
+                "-g",
+                str(key_file),
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.model == "gemini-2.5-pro"
 
 
 class TestMain:
@@ -293,7 +398,7 @@ class TestMain:
             main(
                 [
                     "list-merge-proposals",
-                    "--credentials",
+                    "--launchpad-credentials",
                     "/path/to/creds",
                     "--status",
                     "Needs review",
@@ -322,3 +427,318 @@ class TestMain:
         captured = capsys.readouterr()
         assert lp_mp.web_link in captured.out
         assert review_date.isoformat() in captured.out
+
+
+class TestRefToBranch:
+    def test_strips_refs_heads_prefix(self) -> None:
+        assert _ref_to_branch("refs/heads/feature") == "feature"
+
+    def test_strips_refs_heads_with_slashes(self) -> None:
+        assert _ref_to_branch("refs/heads/user/my-feature") == "user/my-feature"
+
+    def test_returns_unchanged_without_prefix(self) -> None:
+        assert _ref_to_branch("main") == "main"
+
+    def test_returns_unchanged_for_partial_prefix(self) -> None:
+        assert _ref_to_branch("refs/tags/v1.0") == "refs/tags/v1.0"
+
+
+class TestHasExistingReview:
+    def test_returns_false_when_no_comments(self) -> None:
+        client = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp()
+        client.add_merge_proposal(mp)
+
+        assert has_existing_review(client, mp.api_url) is False
+
+    def test_returns_true_when_bot_review_exists(self) -> None:
+        client = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp()
+        client.add_merge_proposal(mp)
+        client.add_comment(
+            mp.api_url,
+            Comment(
+                author="ci-bot",
+                body="[lp-ci-tools review]\n\nLooks good!",
+                date=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
+            ),
+        )
+
+        assert has_existing_review(client, mp.api_url) is True
+
+    def test_returns_false_for_non_bot_comment_with_marker(self) -> None:
+        client = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp()
+        client.add_merge_proposal(mp)
+        client.add_comment(
+            mp.api_url,
+            Comment(
+                author="human-user",
+                body="[lp-ci-tools review]\n\nFake review",
+                date=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
+            ),
+        )
+
+        assert has_existing_review(client, mp.api_url) is False
+
+    def test_returns_false_for_bot_comment_without_marker(self) -> None:
+        client = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp()
+        client.add_merge_proposal(mp)
+        client.add_comment(
+            mp.api_url,
+            Comment(
+                author="ci-bot",
+                body="Just a regular comment",
+                date=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
+            ),
+        )
+
+        assert has_existing_review(client, mp.api_url) is False
+
+
+def _setup_repos(
+    tmp_path: Path,
+    git: FakeGitClient,
+    *,
+    target_files: dict[str, str] | None = None,
+    source_files: dict[str, str] | None = None,
+) -> tuple[Path, Path]:
+    """Create a target and source repo for review tests.
+
+    Returns (target_repo_path, source_repo_path).
+    The source repo is cloned from target, with a ``feature`` branch
+    containing the source changes.
+    """
+    if target_files is None:
+        target_files = {"file.txt": "original\n"}
+    if source_files is None:
+        source_files = {"file.txt": "modified\n"}
+
+    target_repo = tmp_path / "target"
+    git.create_repo(target_repo)
+    git.add_commit(target_repo, target_files, message="init")
+
+    source_repo = tmp_path / "source"
+    git.clone(str(target_repo), source_repo, "main")
+    git.create_branch(source_repo, "feature")
+    git.checkout(source_repo, "feature")
+    git.add_commit(source_repo, source_files, message="feature work")
+
+    return target_repo, source_repo
+
+
+class TestReviewMergeProposal:
+    def test_full_flow_posts_review_comment(self, tmp_path: Path) -> None:
+        """End-to-end: MP exists, not yet reviewed, review is posted."""
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient([ScriptedResponse(text="LGTM, no issues found.")])
+
+        result = review_merge_proposal(lp, git, llm, mp.url, repo_url_fn=str)
+
+        assert result is not None
+        assert result.startswith(REVIEW_MARKER)
+        assert "LGTM, no issues found." in result
+
+        # Verify the comment was posted to Launchpad
+        comments = lp.get_comments(mp.api_url)
+        assert len(comments) == 1
+        assert comments[0].body == result
+        assert comments[0].author == "ci-bot"
+
+    def test_already_reviewed_mp_returns_none(self, tmp_path: Path) -> None:
+        """An MP with an existing review is skipped."""
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+        lp.add_comment(
+            mp.api_url,
+            Comment(
+                author="ci-bot",
+                body="[lp-ci-tools review]\n\nPrevious review.",
+                date=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
+            ),
+        )
+
+        llm = FakeLLMClient()  # no responses needed — should not be called
+
+        result = review_merge_proposal(lp, git, llm, mp.url, repo_url_fn=str)
+
+        assert result is None
+        # No new comment should have been posted
+        comments = lp.get_comments(mp.api_url)
+        assert len(comments) == 1  # only the pre-existing one
+
+    def test_dry_run_does_not_post_comment(self, tmp_path: Path) -> None:
+        """With dry_run=True, the review is returned but not posted."""
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient([ScriptedResponse(text="Some review text.")])
+
+        result = review_merge_proposal(
+            lp, git, llm, mp.url, dry_run=True, repo_url_fn=str
+        )
+
+        assert result is not None
+        assert "Some review text." in result
+        # No comment should have been posted
+        comments = lp.get_comments(mp.api_url)
+        assert len(comments) == 0
+
+    def test_diff_is_passed_to_llm(self, tmp_path: Path) -> None:
+        """The diff content is included in the prompt sent to the LLM."""
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(
+            tmp_path,
+            git,
+            target_files={"code.py": "def hello():\n    pass\n"},
+            source_files={"code.py": "def hello():\n    print('hi')\n"},
+        )
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient([ScriptedResponse(text="Nice change.")])
+
+        review_merge_proposal(lp, git, llm, mp.url, repo_url_fn=str)
+
+        prompt = llm.received_prompts[0]
+        assert "pass" in prompt
+        assert "print" in prompt
+
+    def test_description_is_passed_to_llm(self, tmp_path: Path) -> None:
+        """The MP description is included in the prompt."""
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+            description="Fix the widget rendering bug",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient([ScriptedResponse(text="Looks good.")])
+
+        review_merge_proposal(lp, git, llm, mp.url, repo_url_fn=str)
+
+        prompt = llm.received_prompts[0]
+        assert "Fix the widget rendering bug" in prompt
+
+    def test_commit_message_used_when_no_description(self, tmp_path: Path) -> None:
+        """Falls back to commit_message when description is None."""
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+            description=None,
+            commit_message="Refactor auth module",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient([ScriptedResponse(text="OK.")])
+
+        review_merge_proposal(lp, git, llm, mp.url, repo_url_fn=str)
+
+        prompt = llm.received_prompts[0]
+        assert "Refactor auth module" in prompt
+
+    def test_tools_provided_to_llm_can_read_files(self, tmp_path: Path) -> None:
+        """The read_file tool provided to the LLM can read from the repo."""
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(
+            tmp_path,
+            git,
+            target_files={"AGENTS.md": "# Rules\nBe nice.\n", "file.txt": "a\n"},
+            source_files={"file.txt": "b\n"},
+        )
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        from tests.fake_llm import ToolCall
+
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="Reviewed with context.",
+                    tool_calls=[
+                        ToolCall(name="read_file", args={"path": "AGENTS.md"}),
+                    ],
+                ),
+            ]
+        )
+
+        result = review_merge_proposal(lp, git, llm, mp.url, repo_url_fn=str)
+
+        assert result is not None
+        assert "Reviewed with context." in result
+
+    def test_review_comment_has_correct_format(self, tmp_path: Path) -> None:
+        """The posted comment starts with the marker, then blank line, then review."""
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient([ScriptedResponse(text="Review body here.")])
+
+        result = review_merge_proposal(lp, git, llm, mp.url, repo_url_fn=str)
+
+        assert result == "[lp-ci-tools review]\n\nReview body here."

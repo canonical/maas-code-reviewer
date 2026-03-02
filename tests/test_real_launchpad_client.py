@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from lp_ci_tools.real_launchpad_client import RealLaunchpadClient
+from lp_ci_tools.real_launchpad_client import RealLaunchpadClient, _web_url_to_api_url
 from tests.fake_launchpadlib import (
     FakeLaunchpad,
     make_fake_comment,
@@ -102,6 +102,75 @@ class TestGetMergeProposals:
         result = client.get_merge_proposals("myproject", "Needs review")
 
         assert result[0].description == "A detailed description"
+
+
+class TestGetMergeProposal:
+    def test_returns_merge_proposal_by_api_url(self) -> None:
+        fake_lp = FakeLaunchpad()
+        mp = make_fake_mp(status="Needs review")
+        fake_lp.add_merge_proposal("myproject", mp)
+        client = _make_client(fake_lp)
+
+        result = client.get_merge_proposal(mp.self_link)
+
+        assert result.url == mp.web_link
+        assert result.api_url == mp.self_link
+        assert result.source_git_repository == "~user/project/+git/repo"
+        assert result.source_git_path == "refs/heads/feature"
+        assert result.target_git_repository == "~user/project/+git/repo"
+        assert result.target_git_path == "refs/heads/main"
+        assert result.status == "Needs review"
+
+    def test_preserves_commit_message(self) -> None:
+        fake_lp = FakeLaunchpad()
+        mp = make_fake_mp(commit_message="Fix the thing")
+        fake_lp.add_merge_proposal("myproject", mp)
+        client = _make_client(fake_lp)
+
+        result = client.get_merge_proposal(mp.self_link)
+
+        assert result.commit_message == "Fix the thing"
+
+    def test_preserves_description(self) -> None:
+        fake_lp = FakeLaunchpad()
+        mp = make_fake_mp(description="A detailed description")
+        fake_lp.add_merge_proposal("myproject", mp)
+        client = _make_client(fake_lp)
+
+        result = client.get_merge_proposal(mp.self_link)
+
+        assert result.description == "A detailed description"
+
+    def test_returns_merge_proposal_by_web_url(self) -> None:
+        fake_lp = FakeLaunchpad()
+        mp = make_fake_mp(status="Needs review")
+        fake_lp.add_merge_proposal("myproject", mp)
+        client = _make_client(fake_lp)
+
+        result = client.get_merge_proposal(mp.web_link)
+
+        assert result.url == mp.web_link
+        assert result.api_url == mp.self_link
+
+
+class TestWebUrlToApiUrl:
+    def test_converts_web_url(self) -> None:
+        url = "https://code.launchpad.net/~user/project/+git/repo/+merge/123"
+        result = _web_url_to_api_url(url)
+        assert (
+            result
+            == "https://api.launchpad.net/devel/~user/project/+git/repo/+merge/123"
+        )
+
+    def test_leaves_api_url_unchanged(self) -> None:
+        url = "https://api.launchpad.net/devel/~user/project/+git/repo/+merge/123"
+        result = _web_url_to_api_url(url)
+        assert result == url
+
+    def test_leaves_unknown_url_unchanged(self) -> None:
+        url = "https://example.com/something"
+        result = _web_url_to_api_url(url)
+        assert result == url
 
 
 class TestGetComments:

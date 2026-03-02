@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from typing import Protocol
 
@@ -23,15 +22,10 @@ class GeminiClient:
     def __init__(
         self,
         *,
-        api_key: str | None = None,
-        model: str = "gemini-2.5-flash",
+        api_key: str,
+        model: str = "gemini-3-flash-preview",
     ) -> None:
-        resolved_key = api_key or os.environ.get("GEMINI_API_KEY", "")
-        if not resolved_key:
-            raise ValueError(
-                "No API key provided. Set GEMINI_API_KEY or pass api_key=."
-            )
-        self._client = genai.Client(api_key=resolved_key)
+        self._client = genai.Client(api_key=api_key)
         self._model = model
 
     def review(self, prompt: str, tools: list[Callable[..., str]]) -> str:

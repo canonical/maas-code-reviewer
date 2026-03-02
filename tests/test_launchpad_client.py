@@ -82,6 +82,38 @@ class TestGetMergeProposals:
         assert result == [mp1, mp2]
 
 
+class TestGetMergeProposal:
+    def test_returns_mp_by_web_url(self) -> None:
+        client = FakeLaunchpadClient()
+        mp = make_mp()
+        client.add_merge_proposal(mp)
+
+        result = client.get_merge_proposal(mp.url)
+
+        assert result is mp
+
+    def test_returns_mp_by_api_url(self) -> None:
+        client = FakeLaunchpadClient()
+        mp = make_mp()
+        client.add_merge_proposal(mp)
+
+        result = client.get_merge_proposal(mp.api_url)
+
+        assert result is mp
+
+    def test_raises_key_error_for_unknown_url(self) -> None:
+        client = FakeLaunchpadClient()
+        mp = make_mp()
+        client.add_merge_proposal(mp)
+
+        try:
+            client.get_merge_proposal("https://example.com/unknown")
+            raised = False
+        except KeyError:
+            raised = True
+        assert raised
+
+
 class TestGetComments:
     def test_no_comments_returns_empty_list(self) -> None:
         client = FakeLaunchpadClient()

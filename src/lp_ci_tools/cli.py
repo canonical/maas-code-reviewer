@@ -2,14 +2,27 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
+from lp_ci_tools.git import GitClient, RealGitClient
 from lp_ci_tools.launchpad_client import LaunchpadClient
+from lp_ci_tools.llm_client import GeminiClient, LLMClient
 from lp_ci_tools.models import Comment
 from lp_ci_tools.real_launchpad_client import RealLaunchpadClient
+from lp_ci_tools.reviewer import review_diff
 
 REVIEW_MARKER = "[lp-ci-tools review]"
+
+_LP_GIT_BASE = "https://git.launchpad.net/"
+
+
+def _lp_repo_url(unique_name: str) -> str:
+    """Convert a Launchpad repo unique name to a git clone URL."""
+    return _LP_GIT_BASE + unique_name
 
 
 @dataclass(frozen=True)
@@ -53,6 +66,86 @@ def _find_last_review_date(
     return max(review_dates)
 
 
+def has_existing_review(client: LaunchpadClient, mp_api_url: str) -> bool:
+    """Return True if the bot has already posted a review on this MP."""
+    comments = client.get_comments(mp_api_url)
+    bot_username = client.get_bot_username()
+    return _find_last_review_date(comments, bot_username) is not None
+
+
+def _ref_to_branch(git_path: str) -> str:
+    """Convert a refs/heads/branch-name path to just the branch name."""
+    prefix = "refs/heads/"
+    if git_path.startswith(prefix):
+        return git_path[len(prefix) :]
+    return git_path
+
+
+def review_merge_proposal(
+    lp: LaunchpadClient,
+    git: GitClient,
+    llm: LLMClient,
+    mp_url: str,
+    *,
+    dry_run: bool = False,
+    repo_url_fn: Callable[[str], str] = _lp_repo_url,
+) -> str | None:
+    """Review a single merge proposal end to end.
+
+    Parameters
+    ----------
+    repo_url_fn:
+        Converts a repository unique name to a git-clone-able URL.
+        Defaults to prepending the Launchpad git base URL.
+
+    Returns the review comment body, or ``None`` if the MP was already
+    reviewed.
+    """
+    mp = lp.get_merge_proposal(mp_url)
+
+    if has_existing_review(lp, mp.api_url):
+        return None
+
+    target_branch = _ref_to_branch(mp.target_git_path)
+    source_branch = _ref_to_branch(mp.source_git_path)
+    target_url = repo_url_fn(mp.target_git_repository)
+    source_url = repo_url_fn(mp.source_git_repository)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo_dir = Path(tmpdir) / "repo"
+        git.clone(target_url, repo_dir, target_branch)
+        git.merge_into(repo_dir, source_url, source_branch)
+
+        diff = git.diff(repo_dir, "ORIG_HEAD", "HEAD")
+
+        def read_file(path: str) -> str:
+            content = git.read_file(repo_dir, path)
+            if content is None:
+                return f"Error: file not found: {path}"
+            return content
+
+        def list_directory(path: str) -> str:
+            target = repo_dir / path
+            if not target.is_dir():
+                return f"Error: directory not found: {path}"
+            entries = sorted(entry.name for entry in target.iterdir())
+            return "\n".join(entries)
+
+        description = mp.description or mp.commit_message
+        review_comment = review_diff(
+            llm,
+            diff=diff,
+            description=description,
+            read_file=read_file,
+            list_directory=list_directory,
+        )
+
+    if not dry_run:
+        lp.post_comment(mp.api_url, review_comment, subject="Automated review")
+
+    return review_comment
+
+
 def format_merge_proposals(summaries: list[MergeProposalSummary]) -> str:
     """Format summaries as human-readable text, one line per proposal."""
     lines = []
@@ -71,7 +164,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="List merge proposals for a project.",
     )
     list_parser.add_argument(
-        "--credentials",
+        "--launchpad-credentials",
         type=str,
         default=None,
         help="Path to Launchpad credentials file.",
@@ -86,6 +179,40 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Launchpad project name.",
     )
 
+    review_parser = subparsers.add_parser(
+        "review",
+        help="Review a single merge proposal.",
+    )
+    review_parser.add_argument(
+        "--launchpad-credentials",
+        type=str,
+        default=None,
+        help="Path to Launchpad credentials file.",
+    )
+    review_parser.add_argument(
+        "-g",
+        "--gemini-api-key-file",
+        type=str,
+        required=True,
+        help="Path to file containing the Gemini API key.",
+    )
+    review_parser.add_argument(
+        "--model",
+        type=str,
+        default="gemini-3-flash-preview",
+        help="Gemini model to use (default: 'gemini-3-flash-preview').",
+    )
+    review_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Print review to stdout instead of posting as a comment.",
+    )
+    review_parser.add_argument(
+        "mp_url",
+        help="URL of the merge proposal to review.",
+    )
+
     return parser
 
 
@@ -98,8 +225,25 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     if args.command == "list-merge-proposals":
-        client = RealLaunchpadClient(credentials_file=args.credentials)
+        client = RealLaunchpadClient(credentials_file=args.launchpad_credentials)
         summaries = list_merge_proposals(client, args.project, args.status)
         output = format_merge_proposals(summaries)
         if output:
             print(output)
+
+    elif args.command == "review":
+        lp_client = RealLaunchpadClient(credentials_file=args.launchpad_credentials)
+        git_client = RealGitClient()
+        api_key = Path(args.gemini_api_key_file).read_text().strip()
+        llm_client = GeminiClient(api_key=api_key, model=args.model)
+        result = review_merge_proposal(
+            lp_client,
+            git_client,
+            llm_client,
+            args.mp_url,
+            dry_run=args.dry_run,
+        )
+        if result is None:
+            print("Already reviewed, skipping.")
+        elif args.dry_run:
+            print(result)

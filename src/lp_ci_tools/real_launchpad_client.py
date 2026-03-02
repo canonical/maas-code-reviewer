@@ -7,6 +7,18 @@ from launchpadlib.launchpad import Launchpad
 from lp_ci_tools.models import Comment, MergeProposal
 
 _SERVICE_ROOT = "https://api.launchpad.net/devel/"
+_WEB_ROOT = "https://code.launchpad.net/"
+
+
+def _web_url_to_api_url(url: str) -> str:
+    """Convert a Launchpad web URL to its API equivalent.
+
+    If the URL is already an API URL or doesn't match the web root,
+    return it unchanged.
+    """
+    if url.startswith(_WEB_ROOT):
+        return _SERVICE_ROOT + url[len(_WEB_ROOT) :]
+    return url
 
 
 class RealLaunchpadClient:
@@ -19,6 +31,11 @@ class RealLaunchpadClient:
             credentials_file=credentials_file,
             version="devel",
         )
+
+    def get_merge_proposal(self, mp_url: str) -> MergeProposal:
+        api_url = _web_url_to_api_url(mp_url)
+        lp_mp = self._lp.load(api_url)
+        return _to_merge_proposal(lp_mp)
 
     def get_merge_proposals(self, project: str, status: str) -> list[MergeProposal]:
         lp_project = self._lp.load(_SERVICE_ROOT + project)
