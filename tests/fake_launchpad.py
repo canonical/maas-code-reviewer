@@ -49,16 +49,24 @@ class FakeLaunchpadClient(LaunchpadClient):
             if mp.target_git_repository == project and mp.status == status
         ]
 
-    def get_comments(self, mp_api_url: str) -> list[Comment]:
-        return list(self._comments.get(mp_api_url, []))
+    def get_comments(self, mp: MergeProposal) -> list[Comment]:
+        return list(self._comments.get(mp.api_url, []))
 
-    def post_comment(self, mp_api_url: str, content: str, subject: str) -> None:
+    def post_comment(self, mp: MergeProposal, content: str, subject: str) -> None:
         comment = Comment(
             author=self._bot_username,
             body=content,
             date=datetime.now(UTC),
         )
-        self._comments.setdefault(mp_api_url, []).append(comment)
+        self._comments.setdefault(mp.api_url, []).append(comment)
 
     def get_bot_username(self) -> str:
         return self._bot_username
+
+    # ------------------------------------------------------------------
+    # Test inspection helpers
+    # ------------------------------------------------------------------
+
+    def get_comments_for(self, mp_api_url: str) -> list[Comment]:
+        """Return comments for an MP by api_url, for use in test assertions."""
+        return list(self._comments.get(mp_api_url, []))

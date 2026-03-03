@@ -467,7 +467,7 @@ class TestMain:
 
         captured = capsys.readouterr()
         assert captured.out == ""
-        comments = lp.get_comments(mp.api_url)
+        comments = lp.get_comments_for(mp.api_url)
         assert len(comments) == 1
         assert "Looks great." in comments[0].body
 
@@ -553,7 +553,7 @@ class TestMain:
 
         captured = capsys.readouterr()
         assert "Dry run review." in captured.out
-        assert len(lp.get_comments(mp.api_url)) == 0
+        assert len(lp.get_comments_for(mp.api_url)) == 0
 
 
 class TestLpRepoUrl:
@@ -586,7 +586,7 @@ class TestHasExistingReview:
         mp = make_mp()
         client.add_merge_proposal(mp)
 
-        assert has_existing_review(client, mp.api_url) is False
+        assert has_existing_review(client, mp) is False
 
     def test_returns_true_when_bot_review_exists(self) -> None:
         client = FakeLaunchpadClient(bot_username="ci-bot")
@@ -601,7 +601,7 @@ class TestHasExistingReview:
             ),
         )
 
-        assert has_existing_review(client, mp.api_url) is True
+        assert has_existing_review(client, mp) is True
 
     def test_returns_false_for_non_bot_comment_with_marker(self) -> None:
         client = FakeLaunchpadClient(bot_username="ci-bot")
@@ -616,7 +616,7 @@ class TestHasExistingReview:
             ),
         )
 
-        assert has_existing_review(client, mp.api_url) is False
+        assert has_existing_review(client, mp) is False
 
     def test_returns_false_for_bot_comment_without_marker(self) -> None:
         client = FakeLaunchpadClient(bot_username="ci-bot")
@@ -631,7 +631,7 @@ class TestHasExistingReview:
             ),
         )
 
-        assert has_existing_review(client, mp.api_url) is False
+        assert has_existing_review(client, mp) is False
 
 
 def _setup_repos(
@@ -689,7 +689,7 @@ class TestReviewMergeProposal:
         assert "LGTM, no issues found." in result
 
         # Verify the comment was posted to Launchpad
-        comments = lp.get_comments(mp.api_url)
+        comments = lp.get_comments_for(mp.api_url)
         assert len(comments) == 1
         assert comments[0].body == result
         assert comments[0].author == "ci-bot"
@@ -722,7 +722,7 @@ class TestReviewMergeProposal:
 
         assert result is None
         # No new comment should have been posted
-        comments = lp.get_comments(mp.api_url)
+        comments = lp.get_comments_for(mp.api_url)
         assert len(comments) == 1  # only the pre-existing one
 
     def test_dry_run_does_not_post_comment(self, tmp_path: Path) -> None:
@@ -746,7 +746,7 @@ class TestReviewMergeProposal:
         assert result is not None
         assert "Some review text." in result
         # No comment should have been posted
-        comments = lp.get_comments(mp.api_url)
+        comments = lp.get_comments_for(mp.api_url)
         assert len(comments) == 0
 
     def test_diff_is_passed_to_llm(self, tmp_path: Path) -> None:

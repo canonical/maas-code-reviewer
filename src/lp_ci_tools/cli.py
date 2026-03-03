@@ -10,7 +10,7 @@ from pathlib import Path
 from lp_ci_tools.git import GitClient
 from lp_ci_tools.launchpad_client import LaunchpadClient
 from lp_ci_tools.llm_client import GeminiClient
-from lp_ci_tools.models import Comment
+from lp_ci_tools.models import Comment, MergeProposal
 from lp_ci_tools.reviewer import review_diff
 
 REVIEW_MARKER = "[lp-ci-tools review]"
@@ -33,7 +33,7 @@ def list_merge_proposals(
     bot_username = client.get_bot_username()
     summaries = []
     for mp in proposals:
-        comments = client.get_comments(mp.api_url)
+        comments = client.get_comments(mp)
         last_reviewed = _find_last_review_date(comments, bot_username)
         summaries.append(
             MergeProposalSummary(
@@ -45,9 +45,9 @@ def list_merge_proposals(
     return summaries
 
 
-def has_existing_review(client: LaunchpadClient, mp_api_url: str) -> bool:
+def has_existing_review(client: LaunchpadClient, mp: MergeProposal) -> bool:
     """Return True if the bot has already posted a review on this MP."""
-    comments = client.get_comments(mp_api_url)
+    comments = client.get_comments(mp)
     bot_username = client.get_bot_username()
     return _find_last_review_date(comments, bot_username) is not None
 
@@ -97,7 +97,7 @@ def review_merge_proposal(
     """
     mp = lp.get_merge_proposal(mp_url)
 
-    if has_existing_review(lp, mp.api_url):
+    if has_existing_review(lp, mp):
         return None
 
     target_branch = _ref_to_branch(mp.target_git_path)
@@ -123,7 +123,7 @@ def review_merge_proposal(
         )
 
     if not dry_run:
-        lp.post_comment(mp.api_url, review_comment, subject="Automated review")
+        lp.post_comment(mp, review_comment, subject="Automated review")
 
     return review_comment
 

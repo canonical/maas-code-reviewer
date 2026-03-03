@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -13,6 +13,7 @@ class MergeProposal:
     status: str
     commit_message: str | None
     description: str | None
+    _lp_object: object = field(compare=False, hash=False, repr=False)
 
 
 @dataclass(frozen=True)

@@ -42,13 +42,11 @@ class LaunchpadClient:
         lp_proposals = lp_project.getMergeProposals(status=status)
         return [_to_merge_proposal(lp_mp) for lp_mp in lp_proposals]
 
-    def get_comments(self, mp_url: str) -> list[Comment]:
-        lp_mp = self._lp.load(mp_url)
-        return [_to_comment(lp_comment) for lp_comment in lp_mp.all_comments]
+    def get_comments(self, mp: MergeProposal) -> list[Comment]:
+        return [_to_comment(lp_comment) for lp_comment in mp._lp_object.all_comments]  # type: ignore[attr-defined]
 
-    def post_comment(self, mp_url: str, content: str, subject: str) -> None:
-        lp_mp = self._lp.load(mp_url)
-        lp_mp.createComment(subject=subject, content=content)
+    def post_comment(self, mp: MergeProposal, content: str, subject: str) -> None:
+        mp._lp_object.createComment(subject=subject, content=content)  # type: ignore[attr-defined]
 
     def get_bot_username(self) -> str:
         return self._lp.me.name
@@ -76,9 +74,8 @@ def _get_person_name_from_link(person_link: str) -> str:
         f"Expected person_link to start with {_SERVICE_ROOT}, got {person_link}"
     )
     name = person_link[len(_SERVICE_ROOT) :]
-    if name.startswith("~"):
-        name = name[1:]
-    return name
+    assert name.startswith("~"), f"Expected name to start with ~, got {name}"
+    return name[1:]
 
 
 def _to_merge_proposal(lp_mp: object) -> MergeProposal:
@@ -92,6 +89,7 @@ def _to_merge_proposal(lp_mp: object) -> MergeProposal:
         status=lp_mp.queue_status,  # type: ignore[attr-defined]
         commit_message=lp_mp.commit_message or None,  # type: ignore[attr-defined]
         description=lp_mp.description or None,  # type: ignore[attr-defined]
+        _lp_object=lp_mp,
     )
 
 

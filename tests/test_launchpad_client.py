@@ -183,8 +183,9 @@ class TestGetComments:
         mp = make_fake_mp()
         fake_lp.add_merge_proposal("myproject", mp)
         client = _make_client(fake_lp)
+        loaded_mp = client.get_merge_proposal(mp.self_link)
 
-        result = client.get_comments(mp.self_link)
+        result = client.get_comments(loaded_mp)
 
         assert result == []
 
@@ -196,8 +197,9 @@ class TestGetComments:
         comment = make_fake_comment(author="alice", body="Looks good!", date=date)
         fake_lp.add_comment(mp.web_link, comment)
         client = _make_client(fake_lp)
+        loaded_mp = client.get_merge_proposal(mp.self_link)
 
-        result = client.get_comments(mp.self_link)
+        result = client.get_comments(loaded_mp)
 
         assert len(result) == 1
         assert result[0].author == "alice"
@@ -213,8 +215,9 @@ class TestGetComments:
         fake_lp.add_comment(mp.web_link, c1)
         fake_lp.add_comment(mp.web_link, c2)
         client = _make_client(fake_lp)
+        loaded_mp = client.get_merge_proposal(mp.self_link)
 
-        result = client.get_comments(mp.self_link)
+        result = client.get_comments(loaded_mp)
 
         assert len(result) == 2
         assert result[0].author == "alice"
@@ -227,10 +230,11 @@ class TestPostComment:
         mp = make_fake_mp()
         fake_lp.add_merge_proposal("myproject", mp)
         client = _make_client(fake_lp)
+        loaded_mp = client.get_merge_proposal(mp.self_link)
 
-        client.post_comment(mp.self_link, "Great work!", subject="Review")
+        client.post_comment(loaded_mp, "Great work!", subject="Review")
 
-        result = client.get_comments(mp.self_link)
+        result = client.get_comments(loaded_mp)
         assert len(result) == 1
         assert result[0].author == "ci-bot"
         assert result[0].body == "Great work!"
@@ -242,10 +246,11 @@ class TestPostComment:
         existing = make_fake_comment(author="alice", body="First comment")
         fake_lp.add_comment(mp.web_link, existing)
         client = _make_client(fake_lp)
+        loaded_mp = client.get_merge_proposal(mp.self_link)
 
-        client.post_comment(mp.self_link, "Bot comment", subject="Review")
+        client.post_comment(loaded_mp, "Bot comment", subject="Review")
 
-        result = client.get_comments(mp.self_link)
+        result = client.get_comments(loaded_mp)
         assert len(result) == 2
         assert result[0].author == "alice"
         assert result[1].author == "ci-bot"
