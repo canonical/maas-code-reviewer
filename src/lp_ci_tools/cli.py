@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import sys
 import tempfile
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
