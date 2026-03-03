@@ -88,12 +88,11 @@ def review_merge_proposal(
     git: GitClient,
     llm: GeminiClient,
     mp_url: str,
-    dry_run: bool = False,
 ) -> str | None:
     """Review a single merge proposal end to end.
 
     Returns the review comment body, or ``None`` if the MP was already
-    reviewed.
+    reviewed.  The caller is responsible for posting or printing the result.
     """
     mp = lp.get_merge_proposal(mp_url)
 
@@ -122,9 +121,6 @@ def review_merge_proposal(
             list_directory=tools.list_directory,
         )
 
-    if not dry_run:
-        lp.post_comment(mp, review_comment, subject="Automated review")
-
     return review_comment
 
 
@@ -137,6 +133,31 @@ def format_merge_proposals(summaries: list[MergeProposalSummary]) -> str:
     return "\n".join(lines)
 
 
+def handle_list_merge_proposals(args: argparse.Namespace) -> None:
+    """Handle the list-merge-proposals subcommand."""
+    client = LaunchpadClient(credentials_file=args.launchpad_credentials)
+    summaries = list_merge_proposals(client, args.project, args.status)
+    output = format_merge_proposals(summaries)
+    if output:
+        print(output)
+
+
+def handle_review(args: argparse.Namespace) -> None:
+    """Handle the review subcommand."""
+    lp_client = LaunchpadClient(credentials_file=args.launchpad_credentials)
+    git_client = GitClient()
+    api_key = Path(args.gemini_api_key_file).read_text().strip()
+    llm_client = GeminiClient(api_key=api_key, model=args.model)
+    result = review_merge_proposal(lp_client, git_client, llm_client, args.mp_url)
+    if result is None:
+        print("Already reviewed, skipping.")
+    elif args.dry_run:
+        print(result)
+    else:
+        mp = lp_client.get_merge_proposal(args.mp_url)
+        lp_client.post_comment(mp, result, subject="Automated review")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -146,28 +167,9 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     if args.command == "list-merge-proposals":
-        client = LaunchpadClient(credentials_file=args.launchpad_credentials)
-        summaries = list_merge_proposals(client, args.project, args.status)
-        output = format_merge_proposals(summaries)
-        if output:
-            print(output)
-
+        handle_list_merge_proposals(args)
     elif args.command == "review":
-        lp_client = LaunchpadClient(credentials_file=args.launchpad_credentials)
-        git_client = GitClient()
-        api_key = Path(args.gemini_api_key_file).read_text().strip()
-        llm_client = GeminiClient(api_key=api_key, model=args.model)
-        result = review_merge_proposal(
-            lp_client,
-            git_client,
-            llm_client,
-            args.mp_url,
-            dry_run=args.dry_run,
-        )
-        if result is None:
-            print("Already reviewed, skipping.")
-        elif args.dry_run:
-            print(result)
+        handle_review(args)
 
 
 def _lp_repo_url(unique_name: str) -> str:

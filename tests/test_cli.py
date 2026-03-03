@@ -14,6 +14,8 @@ from lp_ci_tools.cli import (
     _lp_repo_url,
     _ref_to_branch,
     format_merge_proposals,
+    handle_list_merge_proposals,
+    handle_review,
     has_existing_review,
     list_merge_proposals,
     main,
@@ -371,7 +373,7 @@ class TestMain:
             main([])
         assert exc_info.value.code == 1
 
-    def test_list_merge_proposals_prints_output(
+    def test_list_merge_proposals_delegates_to_handle_list_merge_proposals(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         fake_lp = FakeLaunchpad(bot_username="review-bot")
@@ -381,59 +383,8 @@ class TestMain:
             main(["list-merge-proposals", "--status", "Needs review", "myproject"])
         captured = capsys.readouterr()
         assert lp_mp.web_link in captured.out
-        assert "Needs review" in captured.out
-        assert "never" in captured.out
 
-    def test_list_merge_proposals_no_output_when_empty(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        fake_lp = FakeLaunchpad()
-        fake_lp.add_project("myproject")
-        with fake_lp.patch_login_with():
-            main(["list-merge-proposals", "--status", "Needs review", "myproject"])
-        captured = capsys.readouterr()
-        assert captured.out == ""
-
-    def test_list_merge_proposals_passes_credentials(self) -> None:
-        fake_lp = FakeLaunchpad()
-        fake_lp.add_project("myproject")
-        with fake_lp.patch_login_with():
-            main(
-                [
-                    "list-merge-proposals",
-                    "--launchpad-credentials",
-                    "/path/to/creds",
-                    "--status",
-                    "Needs review",
-                    "myproject",
-                ]
-            )
-        assert fake_lp.credentials_file == "/path/to/creds"
-
-    def test_list_merge_proposals_with_reviewed_mp(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        fake_lp = FakeLaunchpad(bot_username="ci-bot")
-        lp_mp = make_fake_mp(status="Needs review")
-        fake_lp.add_merge_proposal("myproject", lp_mp)
-        review_date = datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC)
-        fake_lp.add_comment(
-            lp_mp.web_link,
-            make_fake_comment(
-                author="ci-bot",
-                body="[lp-ci-tools review]\n\nLooks good!",
-                date=review_date,
-            ),
-        )
-        with fake_lp.patch_login_with():
-            main(["list-merge-proposals", "--status", "Needs review", "myproject"])
-        captured = capsys.readouterr()
-        assert lp_mp.web_link in captured.out
-        assert review_date.isoformat() in captured.out
-
-    def test_review_command_posts_review(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_review_command_delegates_to_handle_review(self, tmp_path: Path) -> None:
         git = FakeGitClient()
         target_repo, source_repo = _setup_repos(tmp_path, git)
 
@@ -465,13 +416,111 @@ class TestMain:
                 ]
             )
 
-        captured = capsys.readouterr()
-        assert captured.out == ""
         comments = lp.get_comments_for(mp.api_url)
         assert len(comments) == 1
         assert "Looks great." in comments[0].body
 
-    def test_review_command_prints_already_reviewed(
+
+class TestHandleListMergeProposals:
+    def test_prints_output(self, capsys: pytest.CaptureFixture[str]) -> None:
+        fake_lp = FakeLaunchpad(bot_username="review-bot")
+        lp_mp = make_fake_mp(status="Needs review")
+        fake_lp.add_merge_proposal("myproject", lp_mp)
+        with fake_lp.patch_login_with():
+            args = _build_parser().parse_args(
+                ["list-merge-proposals", "--status", "Needs review", "myproject"]
+            )
+            handle_list_merge_proposals(args)
+        captured = capsys.readouterr()
+        assert lp_mp.web_link in captured.out
+        assert "Needs review" in captured.out
+        assert "never" in captured.out
+
+    def test_no_output_when_empty(self, capsys: pytest.CaptureFixture[str]) -> None:
+        fake_lp = FakeLaunchpad()
+        fake_lp.add_project("myproject")
+        with fake_lp.patch_login_with():
+            args = _build_parser().parse_args(
+                ["list-merge-proposals", "--status", "Needs review", "myproject"]
+            )
+            handle_list_merge_proposals(args)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+
+    def test_passes_credentials(self) -> None:
+        fake_lp = FakeLaunchpad()
+        fake_lp.add_project("myproject")
+        with fake_lp.patch_login_with():
+            args = _build_parser().parse_args(
+                [
+                    "list-merge-proposals",
+                    "--launchpad-credentials",
+                    "/path/to/creds",
+                    "--status",
+                    "Needs review",
+                    "myproject",
+                ]
+            )
+            handle_list_merge_proposals(args)
+        assert fake_lp.credentials_file == "/path/to/creds"
+
+    def test_shows_last_review_date(self, capsys: pytest.CaptureFixture[str]) -> None:
+        fake_lp = FakeLaunchpad(bot_username="ci-bot")
+        lp_mp = make_fake_mp(status="Needs review")
+        fake_lp.add_merge_proposal("myproject", lp_mp)
+        review_date = datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC)
+        fake_lp.add_comment(
+            lp_mp.web_link,
+            make_fake_comment(
+                author="ci-bot",
+                body="[lp-ci-tools review]\n\nLooks good!",
+                date=review_date,
+            ),
+        )
+        with fake_lp.patch_login_with():
+            args = _build_parser().parse_args(
+                ["list-merge-proposals", "--status", "Needs review", "myproject"]
+            )
+            handle_list_merge_proposals(args)
+        captured = capsys.readouterr()
+        assert lp_mp.web_link in captured.out
+        assert review_date.isoformat() in captured.out
+
+
+class TestHandleReview:
+    def test_posts_review_comment(self, tmp_path: Path) -> None:
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient([ScriptedResponse(text="Looks great.")])
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        with (
+            patch("lp_ci_tools.cli.LaunchpadClient", return_value=lp),
+            patch("lp_ci_tools.cli.GitClient", return_value=git),
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+        ):
+            args = _build_parser().parse_args(
+                ["review", "--gemini-api-key-file", str(api_key_file), mp.url]
+            )
+            handle_review(args)
+
+        comments = lp.get_comments_for(mp.api_url)
+        assert len(comments) == 1
+        assert "Looks great." in comments[0].body
+
+    def test_prints_already_reviewed(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         git = FakeGitClient()
@@ -504,19 +553,15 @@ class TestMain:
             patch("lp_ci_tools.cli.GitClient", return_value=git),
             patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
         ):
-            main(
-                [
-                    "review",
-                    "--gemini-api-key-file",
-                    str(api_key_file),
-                    mp.url,
-                ]
+            args = _build_parser().parse_args(
+                ["review", "--gemini-api-key-file", str(api_key_file), mp.url]
             )
+            handle_review(args)
 
         captured = capsys.readouterr()
         assert "Already reviewed, skipping." in captured.out
 
-    def test_review_command_dry_run_prints_review(
+    def test_dry_run_prints_review_without_posting(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         git = FakeGitClient()
@@ -541,7 +586,7 @@ class TestMain:
             patch("lp_ci_tools.cli.GitClient", return_value=git),
             patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
         ):
-            main(
+            args = _build_parser().parse_args(
                 [
                     "review",
                     "--dry-run",
@@ -550,6 +595,7 @@ class TestMain:
                     mp.url,
                 ]
             )
+            handle_review(args)
 
         captured = capsys.readouterr()
         assert "Dry run review." in captured.out
@@ -666,8 +712,8 @@ def _setup_repos(
 
 
 class TestReviewMergeProposal:
-    def test_full_flow_posts_review_comment(self, tmp_path: Path) -> None:
-        """End-to-end: MP exists, not yet reviewed, review is posted."""
+    def test_returns_review_body(self, tmp_path: Path) -> None:
+        """MP exists, not yet reviewed — review body is returned."""
         git = FakeGitClient()
         target_repo, source_repo = _setup_repos(tmp_path, git)
 
@@ -687,12 +733,8 @@ class TestReviewMergeProposal:
         assert result is not None
         assert result.startswith(REVIEW_MARKER)
         assert "LGTM, no issues found." in result
-
-        # Verify the comment was posted to Launchpad
-        comments = lp.get_comments_for(mp.api_url)
-        assert len(comments) == 1
-        assert comments[0].body == result
-        assert comments[0].author == "ci-bot"
+        # Posting is the caller's responsibility — nothing posted here
+        assert lp.get_comments_for(mp.api_url) == []
 
     def test_already_reviewed_mp_returns_none(self, tmp_path: Path) -> None:
         """An MP with an existing review is skipped."""
@@ -725,8 +767,8 @@ class TestReviewMergeProposal:
         comments = lp.get_comments_for(mp.api_url)
         assert len(comments) == 1  # only the pre-existing one
 
-    def test_dry_run_does_not_post_comment(self, tmp_path: Path) -> None:
-        """With dry_run=True, the review is returned but not posted."""
+    def test_returns_review_body_without_posting(self, tmp_path: Path) -> None:
+        """review_merge_proposal returns the body without posting a comment."""
         git = FakeGitClient()
         target_repo, source_repo = _setup_repos(tmp_path, git)
 
@@ -741,11 +783,11 @@ class TestReviewMergeProposal:
 
         llm = FakeLLMClient([ScriptedResponse(text="Some review text.")])
 
-        result = review_merge_proposal(lp, git, llm, mp.url, dry_run=True)
+        result = review_merge_proposal(lp, git, llm, mp.url)
 
         assert result is not None
         assert "Some review text." in result
-        # No comment should have been posted
+        # Posting is the caller's responsibility — nothing posted here
         comments = lp.get_comments_for(mp.api_url)
         assert len(comments) == 0
 
