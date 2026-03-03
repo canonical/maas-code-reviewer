@@ -66,6 +66,21 @@ def _get_git_unique_name(repo_link: str) -> str:
     return repo_link[len(_SERVICE_ROOT) :]
 
 
+def _get_person_name_from_link(person_link: str) -> str:
+    """Extract person name from a person_link URL.
+
+    Given a URL like https://api.launchpad.net/devel/~maas-lander,
+    returns maas-lander.
+    """
+    assert person_link.startswith(_SERVICE_ROOT), (
+        f"Expected person_link to start with {_SERVICE_ROOT}, got {person_link}"
+    )
+    name = person_link[len(_SERVICE_ROOT) :]
+    if name.startswith("~"):
+        name = name[1:]
+    return name
+
+
 def _to_merge_proposal(lp_mp: object) -> MergeProposal:
     return MergeProposal(
         url=lp_mp.web_link,  # type: ignore[attr-defined]
@@ -83,7 +98,7 @@ def _to_merge_proposal(lp_mp: object) -> MergeProposal:
 def _to_comment(lp_comment: object) -> Comment:
     date_created: datetime = lp_comment.date_created  # type: ignore[attr-defined]
     return Comment(
-        author=lp_comment.author.name,  # type: ignore[attr-defined]
+        author=_get_person_name_from_link(lp_comment.author_link),  # type: ignore[attr-defined]
         body=lp_comment.message_body,  # type: ignore[attr-defined]
         date=date_created,
     )

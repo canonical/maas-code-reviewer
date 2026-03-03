@@ -50,6 +50,7 @@ class FakeGitRepository:
 @dataclass
 class FakeComment:
     author: FakeUser
+    author_link: str
     message_body: str
     date_created: datetime
 
@@ -74,6 +75,7 @@ class FakeMergeProposal:
         author = self._owner or FakeUser(name="unknown")
         comment = FakeComment(
             author=author,
+            author_link=_SERVICE_ROOT + "~" + author.name,
             message_body=content,
             date_created=datetime(2025, 1, 1, tzinfo=UTC),
         )
@@ -214,6 +216,7 @@ def make_fake_comment(
     """Convenience factory for ``FakeComment``."""
     return FakeComment(
         author=FakeUser(name=author),
+        author_link=_SERVICE_ROOT + "~" + author,
         message_body=body,
         date_created=date or datetime(2025, 1, 1, tzinfo=UTC),
     )
