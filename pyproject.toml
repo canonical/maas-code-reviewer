@@ -41,12 +41,5 @@ select = ["E", "F", "I", "UP"]
 source = ["src/lp_ci_tools"]
 
 [tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def _check_protocol_compliance",
-    "raise NotImplementedError",
-    "if __name__",
-    "raised = False",
-]
 show_missing = true
 skip_covered = true
