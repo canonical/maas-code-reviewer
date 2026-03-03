@@ -48,3 +48,5 @@ exclude_lines = [
     "if __name__",
     "raised = False",
 ]
+show_missing = true
+skip_covered = true
