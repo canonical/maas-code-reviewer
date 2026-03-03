@@ -8,6 +8,7 @@ import pytest
 from lp_ci_tools.cli import (
     REVIEW_MARKER,
     MergeProposalSummary,
+    RepoTools,
     _build_parser,
     _lp_repo_url,
     _ref_to_branch,
@@ -856,3 +857,114 @@ class TestReviewMergeProposal:
         result = review_merge_proposal(lp, git, llm, mp.url)
 
         assert result == "[lp-ci-tools review]\n\nReview body here."
+
+
+class TestRepoTools:
+    def test_read_file_returns_content(self, tmp_path: Path) -> None:
+        """read_file returns the content of a file inside the repository."""
+        git = FakeGitClient()
+        git.create_repo(tmp_path)
+        git.add_commit(tmp_path, {"notes.txt": "hello\n"}, message="init")
+
+        tools = RepoTools(tmp_path, git)
+
+        assert tools.read_file("notes.txt") == "hello\n"
+
+    def test_read_file_returns_error_for_missing_file(self, tmp_path: Path) -> None:
+        """read_file returns an error string when the file does not exist."""
+        git = FakeGitClient()
+        git.create_repo(tmp_path)
+        git.add_commit(tmp_path, {"file.txt": "x\n"}, message="init")
+
+        tools = RepoTools(tmp_path, git)
+
+        assert tools.read_file("missing.txt") == "Error: file not found: missing.txt"
+
+    def test_read_file_rejects_dotdot_traversal(self, tmp_path: Path) -> None:
+        """read_file refuses a relative path that escapes the repository."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        secret = tmp_path / "credentials.txt"
+        secret.write_text("super-secret-api-key\n")
+
+        git = FakeGitClient()
+        git.create_repo(repo)
+        git.add_commit(repo, {"file.txt": "safe\n"}, message="init")
+
+        tools = RepoTools(repo, git)
+        result = tools.read_file("../credentials.txt")
+
+        assert "Error: path outside repository" in result
+        assert "super-secret-api-key" not in result
+
+    def test_read_file_rejects_absolute_path(self, tmp_path: Path) -> None:
+        """read_file refuses an absolute path pointing outside the repository."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        secret = tmp_path / "credentials.txt"
+        secret.write_text("super-secret-api-key\n")
+
+        git = FakeGitClient()
+        git.create_repo(repo)
+        git.add_commit(repo, {"file.txt": "safe\n"}, message="init")
+
+        tools = RepoTools(repo, git)
+        result = tools.read_file(str(secret))
+
+        assert "Error: path outside repository" in result
+        assert "super-secret-api-key" not in result
+
+    def test_list_directory_returns_sorted_entries(self, tmp_path: Path) -> None:
+        """list_directory returns a sorted newline-joined list of entry names."""
+        git = FakeGitClient()
+        git.create_repo(tmp_path)
+        git.add_commit(
+            tmp_path,
+            {"src/beta.py": "pass\n", "src/alpha.py": "pass\n"},
+            message="init",
+        )
+
+        tools = RepoTools(tmp_path, git)
+
+        assert tools.list_directory("src") == "alpha.py\nbeta.py"
+
+    def test_list_directory_returns_error_for_missing_dir(self, tmp_path: Path) -> None:
+        """list_directory returns an error string when the directory does not exist."""
+        git = FakeGitClient()
+        git.create_repo(tmp_path)
+        git.add_commit(tmp_path, {"file.txt": "x\n"}, message="init")
+
+        tools = RepoTools(tmp_path, git)
+
+        assert (
+            tools.list_directory("nonexistent")
+            == "Error: directory not found: nonexistent"
+        )
+
+    def test_list_directory_rejects_dotdot_traversal(self, tmp_path: Path) -> None:
+        """list_directory refuses a relative path that escapes the repository."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        git = FakeGitClient()
+        git.create_repo(repo)
+        git.add_commit(repo, {"file.txt": "safe\n"}, message="init")
+
+        tools = RepoTools(repo, git)
+        result = tools.list_directory("../..")
+
+        assert "Error: path outside repository" in result
+
+    def test_list_directory_rejects_absolute_path(self, tmp_path: Path) -> None:
+        """list_directory refuses an absolute path pointing outside the repository."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        git = FakeGitClient()
+        git.create_repo(repo)
+        git.add_commit(repo, {"file.txt": "safe\n"}, message="init")
+
+        tools = RepoTools(repo, git)
+        result = tools.list_directory(str(tmp_path))
+
+        assert "Error: path outside repository" in result

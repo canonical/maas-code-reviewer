@@ -52,6 +52,37 @@ def has_existing_review(client: LaunchpadClient, mp_api_url: str) -> bool:
     return _find_last_review_date(comments, bot_username) is not None
 
 
+class RepoTools:
+    """File-system tools scoped to a single repository directory.
+
+    All paths are resolved and checked against ``repo_dir`` before any
+    operation is performed, so neither ``read_file`` nor ``list_directory``
+    can be used to escape outside the repository tree.
+    """
+
+    def __init__(self, repo_dir: Path, git: GitClient) -> None:
+        self._repo_dir = repo_dir
+        self._git = git
+
+    def read_file(self, path: str) -> str:
+        target = (self._repo_dir / path).resolve()
+        if not target.is_relative_to(self._repo_dir.resolve()):
+            return f"Error: path outside repository: {path}"
+        content = self._git.read_file(self._repo_dir, path)
+        if content is None:
+            return f"Error: file not found: {path}"
+        return content
+
+    def list_directory(self, path: str) -> str:
+        target = (self._repo_dir / path).resolve()
+        if not target.is_relative_to(self._repo_dir.resolve()):
+            return f"Error: path outside repository: {path}"
+        if not target.is_dir():
+            return f"Error: directory not found: {path}"
+        entries = sorted(entry.name for entry in target.iterdir())
+        return "\n".join(entries)
+
+
 def review_merge_proposal(
     lp: LaunchpadClient,
     git: GitClient,
@@ -81,26 +112,14 @@ def review_merge_proposal(
 
         diff = git.diff(repo_dir, "ORIG_HEAD", "HEAD")
 
-        def read_file(path: str) -> str:
-            content = git.read_file(repo_dir, path)
-            if content is None:
-                return f"Error: file not found: {path}"
-            return content
-
-        def list_directory(path: str) -> str:
-            target = repo_dir / path
-            if not target.is_dir():
-                return f"Error: directory not found: {path}"
-            entries = sorted(entry.name for entry in target.iterdir())
-            return "\n".join(entries)
-
+        tools = RepoTools(repo_dir, git)
         description = mp.description or mp.commit_message
         review_comment = review_diff(
             llm,
             diff=diff,
             description=description,
-            read_file=read_file,
-            list_directory=list_directory,
+            read_file=tools.read_file,
+            list_directory=tools.list_directory,
         )
 
     if not dry_run:
