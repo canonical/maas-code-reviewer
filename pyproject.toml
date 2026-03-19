@@ -11,6 +11,7 @@ dependencies = [
     "google-genai",
     "keyring",
     "launchpadlib",
+    "PyGithub",
 ]
 
 [project.scripts]

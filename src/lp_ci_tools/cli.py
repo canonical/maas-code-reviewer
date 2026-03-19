@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -8,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from lp_ci_tools.git import GitClient
+from lp_ci_tools.github_client import GitHubClient, parse_pr_url
 from lp_ci_tools.launchpad_client import LaunchpadClient
 from lp_ci_tools.llm_client import GeminiClient
 from lp_ci_tools.models import Comment, MergeProposal
@@ -141,8 +144,6 @@ def handle_review_diff(args: argparse.Namespace) -> None:
     tools = RepoTools(repo_dir)
 
     if args.json_output:
-        import json
-
         result_dict = review_diff_structured(
             llm_client,
             diff=diff,
@@ -162,6 +163,55 @@ def handle_review_diff(args: argparse.Namespace) -> None:
         print(result)
 
 
+def handle_review_pr(args: argparse.Namespace) -> None:
+    """Handle the review-pr subcommand."""
+    owner, repo, pr_number = parse_pr_url(args.pr_url)
+
+    token = args.github_token or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        print(
+            "Error: GitHub token not provided. Use --github-token or set the "
+            "GITHUB_TOKEN environment variable.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    github_client = GitHubClient(token)
+    diff = github_client.get_pr_diff(owner, repo, pr_number)
+    description = github_client.get_pr_description(owner, repo, pr_number)
+
+    repo_dir = Path(args.repo_dir) if args.repo_dir else Path.cwd()
+    tools = RepoTools(repo_dir)
+
+    api_key = Path(args.gemini_api_key_file).read_text().strip()
+    llm_client = GeminiClient(api_key=api_key, model=args.model)
+
+    result_dict = review_diff_structured(
+        llm_client,
+        diff=diff,
+        description=description,
+        read_file=tools.read_file,
+        list_directory=tools.list_directory,
+    )
+
+    if args.dry_run:
+        print(json.dumps(result_dict, indent=2))
+        return
+
+    general_comment = result_dict.get("general_comment", "")
+    inline_comments = result_dict.get("inline_comments", {})
+
+    comments = [
+        {"path": file_path, "line": int(line_str), "body": comment_body}
+        for file_path, line_map in inline_comments.items()
+        for line_str, comment_body in line_map.items()
+    ]
+
+    github_client.post_review(
+        owner, repo, pr_number, body=general_comment, comments=comments
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -176,6 +226,8 @@ def main(argv: list[str] | None = None) -> None:
         handle_review_mp(args)
     elif args.command == "review-diff":
         handle_review_diff(args)
+    elif args.command == "review-pr":
+        handle_review_pr(args)
 
 
 def _lp_repo_url(unique_name: str) -> str:
@@ -318,6 +370,52 @@ def _build_parser() -> argparse.ArgumentParser:
     diff_parser.add_argument(
         "diff_file",
         help="Path to a unified diff file, or '-' to read from stdin.",
+    )
+
+    pr_parser = subparsers.add_parser(
+        "review-pr",
+        help="Review a GitHub pull request and post the review.",
+    )
+    pr_parser.add_argument(
+        "-g",
+        "--gemini-api-key-file",
+        type=str,
+        required=True,
+        help="Path to file containing the Gemini API key.",
+    )
+    pr_parser.add_argument(
+        "--github-token",
+        type=str,
+        default=None,
+        help=(
+            "GitHub personal access token. If not provided, read from the "
+            "GITHUB_TOKEN environment variable."
+        ),
+    )
+    pr_parser.add_argument(
+        "--model",
+        type=str,
+        default="gemini-3-flash-preview",
+        help="Gemini model to use (default: 'gemini-3-flash-preview').",
+    )
+    pr_parser.add_argument(
+        "--repo-dir",
+        type=str,
+        default=None,
+        help=(
+            "Path to a local checkout of the repository (default: current working "
+            "directory). Used for read_file and list_directory tool calls."
+        ),
+    )
+    pr_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Print the review JSON to stdout instead of posting it.",
+    )
+    pr_parser.add_argument(
+        "pr_url",
+        help="Full GitHub PR URL, e.g. https://github.com/owner/repo/pull/42.",
     )
 
     return parser

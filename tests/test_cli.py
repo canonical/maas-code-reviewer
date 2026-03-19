@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ from lp_ci_tools.cli import (
     handle_list_lp_mps,
     handle_review_diff,
     handle_review_mp,
+    handle_review_pr,
     has_existing_review,
     list_merge_proposals,
     main,
@@ -25,6 +27,7 @@ from lp_ci_tools.cli import (
 from lp_ci_tools.models import Comment
 from tests.factory import make_mp
 from tests.fake_git import FakeGitClient
+from tests.fake_github import FakeGitHubClient
 from tests.fake_launchpad import FakeLaunchpadClient
 from tests.fake_launchpadlib import FakeLaunchpad, make_fake_comment, make_fake_mp
 from tests.fake_llm import FakeLLMClient, ScriptedResponse, ToolCall
@@ -1546,3 +1549,433 @@ class TestMainReviewDiff:
 
         captured = capsys.readouterr()
         assert "Main dispatch works." in captured.out
+
+
+_PR_DIFF = (
+    "--- a/src/foo.py\n"
+    "+++ b/src/foo.py\n"
+    "@@ -1,3 +1,4 @@\n"
+    " import os\n"
+    "+import sys\n"
+    "\n"
+    " def main():\n"
+)
+
+_PR_REVIEW_RESPONSE = json.dumps(
+    {
+        "general_comment": "Looks good overall.",
+        "inline_comments": {
+            "src/foo.py": {
+                "2": "Nice import.",
+            }
+        },
+    }
+)
+
+_PR_EMPTY_RESPONSE = json.dumps(
+    {
+        "general_comment": "No issues.",
+        "inline_comments": {},
+    }
+)
+
+
+class TestBuildParserReviewPr:
+    def test_review_pr_parses_pr_url(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "https://github.com/owner/repo/pull/42",
+            ]
+        )
+        assert args.pr_url == "https://github.com/owner/repo/pull/42"
+
+    def test_review_pr_requires_pr_url(self) -> None:
+        with pytest.raises(SystemExit):
+            _build_parser().parse_args(["review-pr", "-g", "key.txt"])
+
+    def test_review_pr_requires_gemini_api_key_file(self) -> None:
+        with pytest.raises(SystemExit):
+            _build_parser().parse_args(
+                ["review-pr", "https://github.com/owner/repo/pull/1"]
+            )
+
+    def test_review_pr_github_token_defaults_to_none(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "https://github.com/owner/repo/pull/1",
+            ]
+        )
+        assert args.github_token is None
+
+    def test_review_pr_parses_github_token(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "--github-token",
+                "ghp_abc123",
+                "https://github.com/owner/repo/pull/1",
+            ]
+        )
+        assert args.github_token == "ghp_abc123"
+
+    def test_review_pr_model_defaults_to_gemini_3_flash_preview(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "https://github.com/owner/repo/pull/1",
+            ]
+        )
+        assert args.model == "gemini-3-flash-preview"
+
+    def test_review_pr_parses_model(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "--model",
+                "gemini-pro",
+                "https://github.com/owner/repo/pull/1",
+            ]
+        )
+        assert args.model == "gemini-pro"
+
+    def test_review_pr_repo_dir_defaults_to_none(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "https://github.com/owner/repo/pull/1",
+            ]
+        )
+        assert args.repo_dir is None
+
+    def test_review_pr_parses_repo_dir(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "--repo-dir",
+                "/some/path",
+                "https://github.com/owner/repo/pull/1",
+            ]
+        )
+        assert args.repo_dir == "/some/path"
+
+    def test_review_pr_dry_run_defaults_to_false(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "https://github.com/owner/repo/pull/1",
+            ]
+        )
+        assert args.dry_run is False
+
+    def test_review_pr_parses_dry_run(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "--dry-run",
+                "https://github.com/owner/repo/pull/1",
+            ]
+        )
+        assert args.dry_run is True
+
+
+class TestHandleReviewPr:
+    def _make_args(
+        self,
+        tmp_path: Path,
+        *,
+        pr_url: str = "https://github.com/owner/repo/pull/42",
+        github_token: str | None = "ghp_test",
+        repo_dir: str | None = None,
+        dry_run: bool = False,
+    ) -> argparse.Namespace:
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+        return _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                str(api_key_file),
+                *(["--github-token", github_token] if github_token else []),
+                *(["--repo-dir", repo_dir] if repo_dir else []),
+                *(["--dry-run"] if dry_run else []),
+                pr_url,
+            ]
+        )
+
+    def test_posts_review_after_fetching_diff(self, tmp_path: Path) -> None:
+        """End-to-end: diff is fetched, reviewed, and posted to GitHub."""
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request(
+            "owner", "repo", 42, diff=_PR_DIFF, description="Add sys import"
+        )
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_REVIEW_RESPONSE)])
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
+
+        reviews = github_client.get_posted_reviews("owner", "repo", 42)
+        assert len(reviews) == 1
+        assert reviews[0]["body"] == "Looks good overall."
+
+    def test_inline_comments_are_posted(self, tmp_path: Path) -> None:
+        """Inline comments from the LLM response are included in the posted review."""
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_REVIEW_RESPONSE)])
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
+
+        reviews = github_client.get_posted_reviews("owner", "repo", 42)
+        comments = reviews[0]["comments"]
+        assert len(comments) == 1
+        assert comments[0]["path"] == "src/foo.py"
+        assert comments[0]["line"] == 2
+        assert comments[0]["body"] == "Nice import."
+
+    def test_no_inline_comments_when_empty(self, tmp_path: Path) -> None:
+        """When the LLM returns no inline comments, an empty list is posted."""
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
+
+        reviews = github_client.get_posted_reviews("owner", "repo", 42)
+        assert reviews[0]["comments"] == []
+
+    def test_dry_run_prints_json_to_stdout(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """With --dry-run, the JSON review is printed to stdout, not posted."""
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_REVIEW_RESPONSE)])
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(
+                self._make_args(tmp_path, dry_run=True, repo_dir=str(tmp_path))
+            )
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert data["general_comment"] == "Looks good overall."
+
+    def test_dry_run_does_not_post_review(self, tmp_path: Path) -> None:
+        """With --dry-run, no review is posted to GitHub."""
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(
+                self._make_args(tmp_path, dry_run=True, repo_dir=str(tmp_path))
+            )
+
+        reviews = github_client.get_posted_reviews("owner", "repo", 42)
+        assert reviews == []
+
+    def test_token_read_from_env_var(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When --github-token is absent, GITHUB_TOKEN env var is used."""
+        monkeypatch.setenv("GITHUB_TOKEN", "env-token")
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        captured_token: list[str] = []
+
+        def fake_github_client(token: str) -> FakeGitHubClient:
+            captured_token.append(token)
+            return github_client
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", side_effect=fake_github_client),
+        ):
+            handle_review_pr(
+                self._make_args(tmp_path, github_token=None, repo_dir=str(tmp_path))
+            )
+
+        assert captured_token == ["env-token"]
+
+    def test_explicit_token_overrides_env_var(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--github-token takes precedence over GITHUB_TOKEN env var."""
+        monkeypatch.setenv("GITHUB_TOKEN", "env-token")
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        captured_token: list[str] = []
+
+        def fake_github_client(token: str) -> FakeGitHubClient:
+            captured_token.append(token)
+            return github_client
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", side_effect=fake_github_client),
+        ):
+            handle_review_pr(
+                self._make_args(
+                    tmp_path, github_token="explicit-token", repo_dir=str(tmp_path)
+                )
+            )
+
+        assert captured_token == ["explicit-token"]
+
+    def test_missing_token_exits_with_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """When no token is available, the command exits with an error message."""
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+        with pytest.raises(SystemExit) as exc_info:
+            handle_review_pr(
+                self._make_args(tmp_path, github_token=None, repo_dir=str(tmp_path))
+            )
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "GITHUB_TOKEN" in captured.err
+
+    def test_description_passed_to_llm(self, tmp_path: Path) -> None:
+        """The PR description is included in the LLM prompt."""
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request(
+            "owner", "repo", 42, diff=_PR_DIFF, description="Fix the widget bug"
+        )
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
+
+        prompt = llm._client.received_prompts[0]
+        assert "Fix the widget bug" in prompt
+
+    def test_diff_passed_to_llm(self, tmp_path: Path) -> None:
+        """The PR diff is included in the LLM prompt."""
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
+
+        prompt = llm._client.received_prompts[0]
+        assert "import sys" in prompt
+
+    def test_default_repo_dir_is_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When --repo-dir is omitted, the current working directory is used."""
+        monkeypatch.chdir(tmp_path)
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+        ):
+            # No --repo-dir; args.repo_dir will be None
+            handle_review_pr(self._make_args(tmp_path, repo_dir=None))
+
+        # If we get here without error, cwd was used successfully.
+        reviews = github_client.get_posted_reviews("owner", "repo", 42)
+        assert len(reviews) == 1
+
+    def test_validate_review_tool_provided_to_llm(self, tmp_path: Path) -> None:
+        """The validate_review tool is provided to the LLM for structured output."""
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
+
+        tool_names = {t.__name__ for t in llm._client.received_tools[0]}
+        assert "validate_review" in tool_names
+
+
+class TestMainReviewPr:
+    def test_review_pr_command_delegates_to_handle_review_pr(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        with (
+            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+        ):
+            main(
+                [
+                    "review-pr",
+                    "-g",
+                    str(api_key_file),
+                    "--github-token",
+                    "ghp_test",
+                    "--repo-dir",
+                    str(tmp_path),
+                    "https://github.com/owner/repo/pull/42",
+                ]
+            )
+
+        reviews = github_client.get_posted_reviews("owner", "repo", 42)
+        assert len(reviews) == 1
