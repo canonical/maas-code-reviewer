@@ -1,9 +1,18 @@
-# lp-ci-tools
+# maas-code-reviewer
 
-A command-line tool that reviews [Launchpad](https://launchpad.net/) merge
-proposals and [GitHub](https://github.com/) pull requests using a Gemini LLM.
-It posts its findings as comments on the merge proposal or pull request.
-Designed to run in Jenkins but also works standalone for local testing.
+An LLM-powered code reviewer for [Launchpad](https://launchpad.net/) merge
+proposals and [GitHub](https://github.com/) pull requests. It uses a Gemini
+LLM to review diffs and post findings as comments on the merge proposal or
+pull request.
+
+Built and maintained by the [MAAS](https://maas.io/) team at
+[Canonical](https://canonical.com/). The tool's review defaults reflect what
+the MAAS team considers sane behaviour for their projects — but there is
+nothing MAAS-specific in how it works, and anyone is welcome to use it on
+their own repositories.
+
+The name `maas-code-reviewer` was chosen to avoid confusion with the many
+generic `llm-code-reviewer`-style tools that already exist.
 
 ## Installation
 
@@ -27,13 +36,14 @@ All review commands require a Gemini API key. Provide the path to a file
 containing the key with the `-g` / `--gemini-api-key-file` flag:
 
 ```sh
-lp-ci-tools review-mp -g /path/to/gemini-api-key MP_URL
+maas-code-reviewer review-mp -g /path/to/gemini-api-key MP_URL
 ```
 
 ### Launchpad Credentials
 
-`lp-ci-tools` uses [launchpadlib](https://help.launchpad.net/API/launchpadlib)
-to authenticate with Launchpad. You can provide credentials in two ways:
+`maas-code-reviewer` uses
+[launchpadlib](https://help.launchpad.net/API/launchpadlib) to authenticate
+with Launchpad. You can provide credentials in two ways:
 
 | Method | Details |
 |---|---|
@@ -60,7 +70,7 @@ in one of two ways:
 List merge proposals for a Launchpad project, filtered by status.
 
 ```sh
-lp-ci-tools list-lp-mps [--launchpad-credentials FILE] [--status STATUS] PROJECT
+maas-code-reviewer list-lp-mps [--launchpad-credentials FILE] [--status STATUS] PROJECT
 ```
 
 | Argument | Description |
@@ -75,7 +85,7 @@ review posted by this tool (or `never`).
 **Example:**
 
 ```sh
-lp-ci-tools list-lp-mps --status "Needs review" maas
+maas-code-reviewer list-lp-mps --status "Needs review" maas
 ```
 
 ### `review-mp`
@@ -83,7 +93,7 @@ lp-ci-tools list-lp-mps --status "Needs review" maas
 Review a single Launchpad merge proposal using Gemini.
 
 ```sh
-lp-ci-tools review-mp [--launchpad-credentials FILE] -g KEY_FILE [--model MODEL] [--dry-run] MP_URL
+maas-code-reviewer review-mp [--launchpad-credentials FILE] -g KEY_FILE [--model MODEL] [--dry-run] MP_URL
 ```
 
 | Argument | Description |
@@ -106,7 +116,7 @@ The tool will:
 **Example:**
 
 ```sh
-lp-ci-tools review-mp -g gemini-api-key --dry-run \
+maas-code-reviewer review-mp -g gemini-api-key --dry-run \
   https://code.launchpad.net/~user/project/+git/repo/+merge/123
 ```
 
@@ -116,7 +126,7 @@ Review a unified diff file and print the result to stdout. The diff can be
 read from a file or from stdin (pass `-` as the filename).
 
 ```sh
-lp-ci-tools review-diff -g KEY_FILE [--model MODEL] [--repo-dir DIR] [--json-output FILE] DIFF_FILE
+maas-code-reviewer review-diff -g KEY_FILE [--model MODEL] [--repo-dir DIR] [--json-output FILE] DIFF_FILE
 ```
 
 | Argument | Description |
@@ -135,13 +145,13 @@ general comment and inline comments keyed by file path and line number (see
 
 ```sh
 # Review a diff file, print plain text to stdout
-lp-ci-tools review-diff -g gemini-api-key changes.diff
+maas-code-reviewer review-diff -g gemini-api-key changes.diff
 
 # Review from stdin
-git diff HEAD~1 | lp-ci-tools review-diff -g gemini-api-key -
+git diff HEAD~1 | maas-code-reviewer review-diff -g gemini-api-key -
 
 # Produce structured JSON output
-lp-ci-tools review-diff -g gemini-api-key --json-output review.json changes.diff
+maas-code-reviewer review-diff -g gemini-api-key --json-output review.json changes.diff
 ```
 
 ### `review-pr`
@@ -150,7 +160,7 @@ Review a GitHub pull request using Gemini and post the review via the GitHub
 API.
 
 ```sh
-lp-ci-tools review-pr -g KEY_FILE [--github-token TOKEN] [--model MODEL] [--repo-dir DIR] [--dry-run] PR_URL
+maas-code-reviewer review-pr -g KEY_FILE [--github-token TOKEN] [--model MODEL] [--repo-dir DIR] [--dry-run] PR_URL
 ```
 
 | Argument | Description |
@@ -173,15 +183,15 @@ The tool will:
 
 ```sh
 # Review a PR and post the result
-lp-ci-tools review-pr -g gemini-api-key \
+maas-code-reviewer review-pr -g gemini-api-key \
   https://github.com/canonical/maas/pull/42
 
 # Dry run — print the JSON review to stdout
-lp-ci-tools review-pr -g gemini-api-key --dry-run \
+maas-code-reviewer review-pr -g gemini-api-key --dry-run \
   https://github.com/canonical/maas/pull/42
 
 # Use a local checkout for extra context
-lp-ci-tools review-pr -g gemini-api-key --repo-dir /path/to/maas \
+maas-code-reviewer review-pr -g gemini-api-key --repo-dir /path/to/maas \
   https://github.com/canonical/maas/pull/42
 ```
 

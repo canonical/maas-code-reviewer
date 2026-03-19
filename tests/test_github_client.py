@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from lp_ci_tools.github_client import parse_pr_url
+from maas_code_reviewer.github_client import parse_pr_url
 from tests.fake_github import FakeGitHubClient
 
 

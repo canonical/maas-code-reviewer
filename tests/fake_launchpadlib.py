@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from unittest.mock import patch
 
-from lp_ci_tools.launchpad_client import web_url_to_api_url
+from maas_code_reviewer.launchpad_client import web_url_to_api_url
 
 # ------------------------------------------------------------------
 # Leaf fakes – these mimic the attribute-access API that
@@ -173,7 +173,7 @@ class FakeLaunchpad:
             return self
 
         with patch(
-            "lp_ci_tools.launchpad_client.Launchpad.login_with",
+            "maas_code_reviewer.launchpad_client.Launchpad.login_with",
             side_effect=_fake_login_with,
         ):
             yield

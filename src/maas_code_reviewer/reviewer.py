@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 
-from lp_ci_tools.llm_client import GeminiClient
-from lp_ci_tools.review_schema import validate_review_json
+from maas_code_reviewer.llm_client import GeminiClient
+from maas_code_reviewer.review_schema import validate_review_json
 
-REVIEW_MARKER = "[lp-ci-tools review]"
+REVIEW_MARKER = "[maas-code-reviewer review]"
 
 STRUCTURED_SYSTEM_INSTRUCTION = """\
 You are an experienced software engineer performing a code review. Your job is to:

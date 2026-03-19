@@ -9,13 +9,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from lp_ci_tools.git import GitClient
-from lp_ci_tools.github_client import GitHubClient, parse_pr_url
-from lp_ci_tools.launchpad_client import LaunchpadClient
-from lp_ci_tools.llm_client import GeminiClient
-from lp_ci_tools.models import Comment, MergeProposal
-from lp_ci_tools.repo_tools import RepoTools
-from lp_ci_tools.reviewer import REVIEW_MARKER, review_diff, review_diff_structured
+from maas_code_reviewer.git import GitClient
+from maas_code_reviewer.github_client import GitHubClient, parse_pr_url
+from maas_code_reviewer.launchpad_client import LaunchpadClient
+from maas_code_reviewer.llm_client import GeminiClient
+from maas_code_reviewer.models import Comment, MergeProposal
+from maas_code_reviewer.repo_tools import RepoTools
+from maas_code_reviewer.reviewer import (
+    REVIEW_MARKER,
+    review_diff,
+    review_diff_structured,
+)
 
 _LP_GIT_BASE = "https://git.launchpad.net/"
 
@@ -269,7 +273,7 @@ def _ref_to_branch(git_path: str) -> str:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="lp-ci-tools")
+    parser = argparse.ArgumentParser(prog="maas-code-reviewer")
     subparsers = parser.add_subparsers(dest="command")
 
     list_parser = subparsers.add_parser(

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from lp_ci_tools.launchpad_client import LaunchpadClient
-from lp_ci_tools.models import Comment, MergeProposal
+from maas_code_reviewer.launchpad_client import LaunchpadClient
+from maas_code_reviewer.models import Comment, MergeProposal
 
 
 class FakeLaunchpadClient(LaunchpadClient):

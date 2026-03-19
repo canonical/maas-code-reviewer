@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from lp_ci_tools.launchpad_client import web_url_to_api_url
+from maas_code_reviewer.launchpad_client import web_url_to_api_url
 from tests.fake_git import FakeGitClient
 from tests.fake_launchpadlib import (
     FakeLaunchpad,

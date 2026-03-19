@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-`lp-ci-tools` is a Python CLI tool that reviews [Launchpad](https://launchpad.net/) merge proposals and [GitHub](https://github.com/) pull requests using a Gemini LLM. See `SPEC.md` for the full specification.
+`maas-code-reviewer` is a Python CLI tool that reviews [Launchpad](https://launchpad.net/) merge proposals and [GitHub](https://github.com/) pull requests using a Gemini LLM. See `SPEC.md` for the full specification.
 
 ## Project Structure
 
-- `src/lp_ci_tools/` — main package
+- `src/maas_code_reviewer/` — main package
   - `cli.py` — argparse CLI entry point; wires dependencies and dispatches subcommands
   - `launchpad_client.py` — `LaunchpadClient` protocol + real implementation
   - `git.py` — `GitClient` protocol + real implementation (subprocess-based)

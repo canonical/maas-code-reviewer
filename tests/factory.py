@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from lp_ci_tools.launchpad_client import _get_git_unique_name, web_url_to_api_url
-from lp_ci_tools.models import MergeProposal
+from maas_code_reviewer.launchpad_client import _get_git_unique_name, web_url_to_api_url
+from maas_code_reviewer.models import MergeProposal
 from tests.fake_launchpadlib import make_fake_mp
 
 

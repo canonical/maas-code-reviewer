@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lp_ci_tools.cli import (
+from maas_code_reviewer.cli import (
     REVIEW_MARKER,
     MergeProposalSummary,
     _build_parser,
@@ -24,7 +24,7 @@ from lp_ci_tools.cli import (
     main,
     review_merge_proposal,
 )
-from lp_ci_tools.models import Comment
+from maas_code_reviewer.models import Comment
 from tests.factory import make_mp
 from tests.fake_git import FakeGitClient
 from tests.fake_github import FakeGitHubClient
@@ -61,7 +61,7 @@ class TestListMergeProposals:
             mp.api_url,
             Comment(
                 author="ci-bot",
-                body="[lp-ci-tools review]\n\nLooks good!",
+                body="[maas-code-reviewer review]\n\nLooks good!",
                 date=review_date,
             ),
         )
@@ -82,7 +82,7 @@ class TestListMergeProposals:
             mp.api_url,
             Comment(
                 author="human-user",
-                body="[lp-ci-tools review]\n\nFake review by human",
+                body="[maas-code-reviewer review]\n\nFake review by human",
                 date=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
             ),
         )
@@ -118,7 +118,7 @@ class TestListMergeProposals:
             mp.api_url,
             Comment(
                 author="ci-bot",
-                body="[lp-ci-tools review]\n\nFirst review",
+                body="[maas-code-reviewer review]\n\nFirst review",
                 date=early,
             ),
         )
@@ -126,7 +126,7 @@ class TestListMergeProposals:
             mp.api_url,
             Comment(
                 author="ci-bot",
-                body="[lp-ci-tools review]\n\nSecond review",
+                body="[maas-code-reviewer review]\n\nSecond review",
                 date=late,
             ),
         )
@@ -146,7 +146,7 @@ class TestListMergeProposals:
             mp1.api_url,
             Comment(
                 author="ci-bot",
-                body="[lp-ci-tools review]\n\nOK",
+                body="[maas-code-reviewer review]\n\nOK",
                 date=review_date,
             ),
         )
@@ -165,7 +165,7 @@ class TestListMergeProposals:
             mp.api_url,
             Comment(
                 author="ci-bot",
-                body="Some preamble [lp-ci-tools review]\n\nContent",
+                body="Some preamble [maas-code-reviewer review]\n\nContent",
                 date=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
             ),
         )
@@ -407,9 +407,9 @@ class TestMain:
         api_key_file.write_text("fake-key\n")
 
         with (
-            patch("lp_ci_tools.cli.LaunchpadClient", return_value=lp),
-            patch("lp_ci_tools.cli.GitClient", return_value=git),
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.LaunchpadClient", return_value=lp),
+            patch("maas_code_reviewer.cli.GitClient", return_value=git),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
         ):
             main(
                 [
@@ -477,7 +477,7 @@ class TestHandleListLpMps:
             lp_mp.web_link,
             make_fake_comment(
                 author="ci-bot",
-                body="[lp-ci-tools review]\n\nLooks good!",
+                body="[maas-code-reviewer review]\n\nLooks good!",
                 date=review_date,
             ),
         )
@@ -511,9 +511,9 @@ class TestHandleReviewMp:
         api_key_file.write_text("fake-key\n")
 
         with (
-            patch("lp_ci_tools.cli.LaunchpadClient", return_value=lp),
-            patch("lp_ci_tools.cli.GitClient", return_value=git),
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.LaunchpadClient", return_value=lp),
+            patch("maas_code_reviewer.cli.GitClient", return_value=git),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
         ):
             args = _build_parser().parse_args(
                 ["review-mp", "--gemini-api-key-file", str(api_key_file), mp.url]
@@ -542,7 +542,7 @@ class TestHandleReviewMp:
             mp.api_url,
             Comment(
                 author="ci-bot",
-                body="[lp-ci-tools review]\n\nAlready done.",
+                body="[maas-code-reviewer review]\n\nAlready done.",
                 date=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
             ),
         )
@@ -553,9 +553,9 @@ class TestHandleReviewMp:
         api_key_file.write_text("fake-key\n")
 
         with (
-            patch("lp_ci_tools.cli.LaunchpadClient", return_value=lp),
-            patch("lp_ci_tools.cli.GitClient", return_value=git),
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.LaunchpadClient", return_value=lp),
+            patch("maas_code_reviewer.cli.GitClient", return_value=git),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
         ):
             args = _build_parser().parse_args(
                 ["review-mp", "--gemini-api-key-file", str(api_key_file), mp.url]
@@ -586,9 +586,9 @@ class TestHandleReviewMp:
         api_key_file.write_text("fake-key\n")
 
         with (
-            patch("lp_ci_tools.cli.LaunchpadClient", return_value=lp),
-            patch("lp_ci_tools.cli.GitClient", return_value=git),
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.LaunchpadClient", return_value=lp),
+            patch("maas_code_reviewer.cli.GitClient", return_value=git),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
         ):
             args = _build_parser().parse_args(
                 [
@@ -646,7 +646,7 @@ class TestHasExistingReview:
             mp.api_url,
             Comment(
                 author="ci-bot",
-                body="[lp-ci-tools review]\n\nLooks good!",
+                body="[maas-code-reviewer review]\n\nLooks good!",
                 date=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
             ),
         )
@@ -661,7 +661,7 @@ class TestHasExistingReview:
             mp.api_url,
             Comment(
                 author="human-user",
-                body="[lp-ci-tools review]\n\nFake review",
+                body="[maas-code-reviewer review]\n\nFake review",
                 date=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
             ),
         )
@@ -757,7 +757,7 @@ class TestReviewMergeProposal:
             mp.api_url,
             Comment(
                 author="ci-bot",
-                body="[lp-ci-tools review]\n\nPrevious review.",
+                body="[maas-code-reviewer review]\n\nPrevious review.",
                 date=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
             ),
         )
@@ -1027,7 +1027,7 @@ class TestReviewMergeProposal:
 
         result = review_merge_proposal(lp, git, llm, mp.url)
 
-        assert result == "[lp-ci-tools review]\n\nReview body here."
+        assert result == "[maas-code-reviewer review]\n\nReview body here."
 
 
 class TestBuildParserReviewDiff:
@@ -1155,7 +1155,7 @@ class TestHandleReviewDiff:
 
         llm = FakeLLMClient([ScriptedResponse(text="All good.")])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 [
                     "review-diff",
@@ -1189,7 +1189,7 @@ class TestHandleReviewDiff:
 
         llm = FakeLLMClient([ScriptedResponse(text="Stdin review.")])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 [
                     "review-diff",
@@ -1228,7 +1228,7 @@ class TestHandleReviewDiff:
             ]
         )
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 [
                     "review-diff",
@@ -1261,7 +1261,7 @@ class TestHandleReviewDiff:
 
         llm = FakeLLMClient([ScriptedResponse(text="CWD review.")])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 ["review-diff", "-g", str(api_key_file), str(diff_file)]
             )
@@ -1285,7 +1285,7 @@ class TestHandleReviewDiff:
 
         llm = FakeLLMClient([ScriptedResponse(text="Nice fix.")])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 [
                     "review-diff",
@@ -1316,7 +1316,7 @@ class TestHandleReviewDiffJsonOutput:
 
         llm = FakeLLMClient([ScriptedResponse(text=_VALID_STRUCTURED_RESPONSE)])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 [
                     "review-diff",
@@ -1347,7 +1347,7 @@ class TestHandleReviewDiffJsonOutput:
 
         llm = FakeLLMClient([ScriptedResponse(text=_VALID_STRUCTURED_RESPONSE)])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 [
                     "review-diff",
@@ -1376,7 +1376,7 @@ class TestHandleReviewDiffJsonOutput:
 
         llm = FakeLLMClient([ScriptedResponse(text=_VALID_STRUCTURED_RESPONSE)])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 [
                     "review-diff",
@@ -1408,7 +1408,7 @@ class TestHandleReviewDiffJsonOutput:
 
         llm = FakeLLMClient([ScriptedResponse(text=_EMPTY_STRUCTURED_RESPONSE)])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 [
                     "review-diff",
@@ -1438,7 +1438,7 @@ class TestHandleReviewDiffJsonOutput:
 
         llm = FakeLLMClient([ScriptedResponse(text="Plain text review.")])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 [
                     "review-diff",
@@ -1467,7 +1467,7 @@ class TestHandleReviewDiffJsonOutput:
 
         llm = FakeLLMClient([ScriptedResponse(text=_VALID_STRUCTURED_RESPONSE)])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 [
                     "review-diff",
@@ -1502,7 +1502,7 @@ class TestHandleReviewDiffJsonOutput:
 
         llm = FakeLLMClient([ScriptedResponse(text=_EMPTY_STRUCTURED_RESPONSE)])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             args = _build_parser().parse_args(
                 [
                     "review-diff",
@@ -1535,7 +1535,7 @@ class TestMainReviewDiff:
 
         llm = FakeLLMClient([ScriptedResponse(text="Main dispatch works.")])
 
-        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
             main(
                 [
                     "review-diff",
@@ -1731,8 +1731,8 @@ class TestHandleReviewPr:
         llm = FakeLLMClient([ScriptedResponse(text=_PR_REVIEW_RESPONSE)])
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
         ):
             handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
 
@@ -1747,8 +1747,8 @@ class TestHandleReviewPr:
         llm = FakeLLMClient([ScriptedResponse(text=_PR_REVIEW_RESPONSE)])
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
         ):
             handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
 
@@ -1766,8 +1766,8 @@ class TestHandleReviewPr:
         llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
         ):
             handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
 
@@ -1783,8 +1783,8 @@ class TestHandleReviewPr:
         llm = FakeLLMClient([ScriptedResponse(text=_PR_REVIEW_RESPONSE)])
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
         ):
             handle_review_pr(
                 self._make_args(tmp_path, dry_run=True, repo_dir=str(tmp_path))
@@ -1801,8 +1801,8 @@ class TestHandleReviewPr:
         llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
         ):
             handle_review_pr(
                 self._make_args(tmp_path, dry_run=True, repo_dir=str(tmp_path))
@@ -1827,8 +1827,10 @@ class TestHandleReviewPr:
             return github_client
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", side_effect=fake_github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch(
+                "maas_code_reviewer.cli.GitHubClient", side_effect=fake_github_client
+            ),
         ):
             handle_review_pr(
                 self._make_args(tmp_path, github_token=None, repo_dir=str(tmp_path))
@@ -1852,8 +1854,10 @@ class TestHandleReviewPr:
             return github_client
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", side_effect=fake_github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch(
+                "maas_code_reviewer.cli.GitHubClient", side_effect=fake_github_client
+            ),
         ):
             handle_review_pr(
                 self._make_args(
@@ -1890,8 +1894,8 @@ class TestHandleReviewPr:
         llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
         ):
             handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
 
@@ -1905,8 +1909,8 @@ class TestHandleReviewPr:
         llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
         ):
             handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
 
@@ -1923,8 +1927,8 @@ class TestHandleReviewPr:
         llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
         ):
             # No --repo-dir; args.repo_dir will be None
             handle_review_pr(self._make_args(tmp_path, repo_dir=None))
@@ -1940,8 +1944,8 @@ class TestHandleReviewPr:
         llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
         ):
             handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
 
@@ -1961,8 +1965,8 @@ class TestMainReviewPr:
         llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
 
         with (
-            patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
-            patch("lp_ci_tools.cli.GitHubClient", return_value=github_client),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
         ):
             main(
                 [

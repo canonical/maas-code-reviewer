@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from lp_ci_tools.reviewer import (
+from maas_code_reviewer.reviewer import (
     REVIEW_MARKER,
     STRUCTURED_SYSTEM_INSTRUCTION,
     SYSTEM_INSTRUCTION,

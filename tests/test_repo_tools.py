@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lp_ci_tools.repo_tools import RepoTools
+from maas_code_reviewer.repo_tools import RepoTools
 
 
 class TestRepoTools:

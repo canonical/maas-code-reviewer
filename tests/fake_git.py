@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from lp_ci_tools.git import GitClient
+from maas_code_reviewer.git import GitClient
 
 
 class FakeGitClient(GitClient):

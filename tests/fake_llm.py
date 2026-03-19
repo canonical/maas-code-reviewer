@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from google.genai import types
 
-from lp_ci_tools.llm_client import GeminiClient
+from maas_code_reviewer.llm_client import GeminiClient
 
 
 @dataclass

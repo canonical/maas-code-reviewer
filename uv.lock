@@ -512,7 +512,7 @@ wheels = [
 ]
 
 [[package]]
-name = "lp-ci-tools"
+name = "maas-code-reviewer"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from lp_ci_tools.models import Comment
+from maas_code_reviewer.models import Comment
 from tests.factory import make_mp
 
 

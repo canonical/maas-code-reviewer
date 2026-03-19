@@ -1,7 +1,7 @@
 [project]
-name = "lp-ci-tools"
+name = "maas-code-reviewer"
 version = "0.1.0"
-description = "CI tools for reviewing Launchpad merge proposals and GitHub pull requests using a Gemini LLM."
+description = "An LLM-powered code reviewer for Launchpad merge proposals and GitHub pull requests. Built by the MAAS team at Canonical."
 readme = "README.md"
 authors = [
     { name = "MAAS Developers" }
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-lp-ci-tools = "lp_ci_tools.cli:main"
+maas-code-reviewer = "maas_code_reviewer.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -39,7 +39,7 @@ line-length = 88
 select = ["E", "F", "I", "UP"]
 
 [tool.coverage.run]
-source = ["src/lp_ci_tools"]
+source = ["src/maas_code_reviewer"]
 
 [tool.coverage.report]
 show_missing = true

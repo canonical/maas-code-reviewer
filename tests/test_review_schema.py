@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from lp_ci_tools.review_schema import parse_diff_files_and_lines, validate_review_json
+from maas_code_reviewer.review_schema import (
+    parse_diff_files_and_lines,
+    validate_review_json,
+)
 
 # ---------------------------------------------------------------------------
 # Sample diffs used across multiple tests

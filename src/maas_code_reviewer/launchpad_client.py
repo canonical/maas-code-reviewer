@@ -4,7 +4,7 @@ from datetime import datetime
 
 from launchpadlib.launchpad import Launchpad
 
-from lp_ci_tools.models import Comment, MergeProposal
+from maas_code_reviewer.models import Comment, MergeProposal
 
 _SERVICE_ROOT = "https://api.launchpad.net/devel/"
 _WEB_ROOT = "https://code.launchpad.net/"
@@ -26,7 +26,7 @@ class LaunchpadClient:
 
     def __init__(self, credentials_file: str | None = None) -> None:
         self._lp = Launchpad.login_with(
-            "lp-ci-tools",
+            "maas-code-reviewer",
             "production",
             credentials_file=credentials_file,
             version="devel",

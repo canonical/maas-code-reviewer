@@ -1,4 +1,4 @@
-# lp-ci-tools: Specification
+# maas-code-reviewer: Specification
 
 ## Overview
 
@@ -11,7 +11,7 @@ Jenkins but must also work standalone for local testing.
 ## Architecture
 
 ```
-src/lp_ci_tools/
+src/maas_code_reviewer/
 ├── __init__.py
 ├── cli.py               # argparse CLI entry point
 ├── launchpad_client.py  # LaunchpadClient protocol + real implementation
@@ -181,10 +181,10 @@ an error message string if the path is outside the repo or is not a directory.
 
 ## CLI Commands
 
-### `lp-ci-tools list-lp-mps`
+### `maas-code-reviewer list-lp-mps`
 
 ```
-lp-ci-tools list-lp-mps [--launchpad-credentials FILE] [--status STATUS] PROJECT
+maas-code-reviewer list-lp-mps [--launchpad-credentials FILE] [--status STATUS] PROJECT
 ```
 
 Lists merge proposals for `PROJECT` filtered by `STATUS`. For each proposal,
@@ -197,10 +197,10 @@ tool (or `never`).
 | `--status STATUS` | Filter by MP status (default: `Needs review`). |
 | `--launchpad-credentials FILE` | Path to Launchpad credentials file. |
 
-### `lp-ci-tools review-mp`
+### `maas-code-reviewer review-mp`
 
 ```
-lp-ci-tools review-mp [--launchpad-credentials FILE] -g KEY_FILE [--model MODEL] [--dry-run] MP_URL
+maas-code-reviewer review-mp [--launchpad-credentials FILE] -g KEY_FILE [--model MODEL] [--dry-run] MP_URL
 ```
 
 Reviews a single Launchpad merge proposal:
@@ -221,10 +221,10 @@ Reviews a single Launchpad merge proposal:
 | `--dry-run` | Print the review to stdout instead of posting it as a comment. |
 | `--launchpad-credentials FILE` | Path to Launchpad credentials file. |
 
-### `lp-ci-tools review-diff`
+### `maas-code-reviewer review-diff`
 
 ```
-lp-ci-tools review-diff -g KEY_FILE [--model MODEL] [--repo-dir DIR] [--json-output FILE] DIFF_FILE
+maas-code-reviewer review-diff -g KEY_FILE [--model MODEL] [--repo-dir DIR] [--json-output FILE] DIFF_FILE
 ```
 
 Reviews a unified diff read from a file (or stdin when `DIFF_FILE` is `-`).
@@ -244,10 +244,10 @@ When `--json-output` is provided, the LLM is instructed to produce structured
 JSON output (see [JSON Review Schema](#json-review-schema) below) and the
 result is written to the specified file.
 
-### `lp-ci-tools review-pr`
+### `maas-code-reviewer review-pr`
 
 ```
-lp-ci-tools review-pr -g KEY_FILE [--github-token TOKEN] [--model MODEL] [--repo-dir DIR] [--dry-run] PR_URL
+maas-code-reviewer review-pr -g KEY_FILE [--github-token TOKEN] [--model MODEL] [--repo-dir DIR] [--dry-run] PR_URL
 ```
 
 Reviews a GitHub pull request:
@@ -308,7 +308,7 @@ before finalising.
 A merge proposal is considered "already reviewed" if:
 
 1. The tool finds a comment authored by its own bot user (`get_bot_username()`).
-2. That comment's body starts with the marker prefix: `[lp-ci-tools review]`.
+2. That comment's body starts with the marker prefix: `[maas-code-reviewer review]`.
 
 ## LLM Review Details
 
@@ -344,7 +344,7 @@ Comments posted to Launchpad merge proposals are prefixed with the review
 marker so duplicate detection works:
 
 ```
-[lp-ci-tools review]
+[maas-code-reviewer review]
 
 <LLM review content here>
 ```

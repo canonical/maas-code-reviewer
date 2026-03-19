@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from lp_ci_tools.launchpad_client import (
+from maas_code_reviewer.launchpad_client import (
     LaunchpadClient,
     _get_git_unique_name,
     web_url_to_api_url,
