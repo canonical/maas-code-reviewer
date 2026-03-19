@@ -25,7 +25,7 @@ class FakeGitClient(GitClient):
     @staticmethod
     def create_repo(path: Path, *, bare: bool = False) -> None:
         """Initialise a new git repository at *path*."""
-        args = ["git", "init"]
+        args = ["git", "init", "-b", "main"]
         if bare:
             args.append("--bare")
         args.append(str(path))
