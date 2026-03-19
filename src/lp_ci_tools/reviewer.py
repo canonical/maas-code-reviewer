@@ -37,7 +37,6 @@ def review_diff(
     description: str | None,
     read_file: Callable[[str], str],
     list_directory: Callable[[str], str],
-    *,
     max_diff_chars: int = 30_000,
 ) -> str:
     """Orchestrate a code review of *diff* using the given LLM.

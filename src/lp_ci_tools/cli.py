@@ -11,9 +11,7 @@ from lp_ci_tools.git import GitClient
 from lp_ci_tools.launchpad_client import LaunchpadClient
 from lp_ci_tools.llm_client import GeminiClient
 from lp_ci_tools.models import Comment, MergeProposal
-from lp_ci_tools.reviewer import review_diff
-
-REVIEW_MARKER = "[lp-ci-tools review]"
+from lp_ci_tools.reviewer import REVIEW_MARKER, review_diff
 
 _LP_GIT_BASE = "https://git.launchpad.net/"
 
@@ -133,8 +131,8 @@ def format_merge_proposals(summaries: list[MergeProposalSummary]) -> str:
     return "\n".join(lines)
 
 
-def handle_list_merge_proposals(args: argparse.Namespace) -> None:
-    """Handle the list-merge-proposals subcommand."""
+def handle_list_lp_mps(args: argparse.Namespace) -> None:
+    """Handle the list-lp-mps subcommand."""
     client = LaunchpadClient(credentials_file=args.launchpad_credentials)
     summaries = list_merge_proposals(client, args.project, args.status)
     output = format_merge_proposals(summaries)
@@ -142,8 +140,8 @@ def handle_list_merge_proposals(args: argparse.Namespace) -> None:
         print(output)
 
 
-def handle_review(args: argparse.Namespace) -> None:
-    """Handle the review subcommand."""
+def handle_review_mp(args: argparse.Namespace) -> None:
+    """Handle the review-mp subcommand."""
     lp_client = LaunchpadClient(credentials_file=args.launchpad_credentials)
     git_client = GitClient()
     api_key = Path(args.gemini_api_key_file).read_text().strip()
@@ -166,10 +164,10 @@ def main(argv: list[str] | None = None) -> None:
         parser.print_help()
         sys.exit(1)
 
-    if args.command == "list-merge-proposals":
-        handle_list_merge_proposals(args)
-    elif args.command == "review":
-        handle_review(args)
+    if args.command == "list-lp-mps":
+        handle_list_lp_mps(args)
+    elif args.command == "review-mp":
+        handle_review_mp(args)
 
 
 def _lp_repo_url(unique_name: str) -> str:
@@ -192,10 +190,14 @@ def _find_last_review_date(
     comments: list[Comment], bot_username: str
 ) -> datetime | None:
     """Find the timestamp of the most recent review comment by the bot."""
+    print(f"REVIEW_MARKER: {REVIEW_MARKER}")
+    print(f"bot_username: {bot_username}")
+    for comment in comments:
+        print(f"comment author: {comment.author}")
     review_dates = [
-        c.date
-        for c in comments
-        if c.author == bot_username and c.body.startswith(REVIEW_MARKER)
+        comment.date
+        for comment in comments
+        if comment.author == bot_username and comment.body.startswith(REVIEW_MARKER)
     ]
     if not review_dates:
         return None
@@ -215,7 +217,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     list_parser = subparsers.add_parser(
-        "list-merge-proposals",
+        "list-lp-mps",
         help="List merge proposals for a project.",
     )
     list_parser.add_argument(
@@ -235,7 +237,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     review_parser = subparsers.add_parser(
-        "review",
+        "review-mp",
         help="Review a single merge proposal.",
     )
     review_parser.add_argument(

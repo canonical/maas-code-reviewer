@@ -14,8 +14,8 @@ from lp_ci_tools.cli import (
     _lp_repo_url,
     _ref_to_branch,
     format_merge_proposals,
-    handle_list_merge_proposals,
-    handle_review,
+    handle_list_lp_mps,
+    handle_review_mp,
     has_existing_review,
     list_merge_proposals,
     main,
@@ -232,28 +232,26 @@ class TestFormatMergeProposals:
 
 
 class TestBuildParser:
-    def test_list_merge_proposals_defaults_status_to_needs_review(self) -> None:
+    def test_list_lp_mps_defaults_status_to_needs_review(self) -> None:
         parser = _build_parser()
-        args = parser.parse_args(["list-merge-proposals", "myproject"])
-        assert args.command == "list-merge-proposals"
+        args = parser.parse_args(["list-lp-mps", "myproject"])
+        assert args.command == "list-lp-mps"
         assert args.status == "Needs review"
         assert args.project == "myproject"
         assert args.launchpad_credentials is None
 
-    def test_list_merge_proposals_parses_explicit_status(self) -> None:
+    def test_list_lp_mps_parses_explicit_status(self) -> None:
         parser = _build_parser()
-        args = parser.parse_args(
-            ["list-merge-proposals", "--status", "Approved", "myproject"]
-        )
-        assert args.command == "list-merge-proposals"
+        args = parser.parse_args(["list-lp-mps", "--status", "Approved", "myproject"])
+        assert args.command == "list-lp-mps"
         assert args.status == "Approved"
         assert args.project == "myproject"
 
-    def test_list_merge_proposals_parses_credentials(self) -> None:
+    def test_list_lp_mps_parses_credentials(self) -> None:
         parser = _build_parser()
         args = parser.parse_args(
             [
-                "list-merge-proposals",
+                "list-lp-mps",
                 "--launchpad-credentials",
                 "/path/to/creds",
                 "--status",
@@ -268,19 +266,19 @@ class TestBuildParser:
         args = parser.parse_args([])
         assert args.command is None
 
-    def test_review_parses_mp_url(self, tmp_path: Path) -> None:
+    def test_review_mp_parses_mp_url(self, tmp_path: Path) -> None:
         key_file = tmp_path / "key"
         key_file.write_text("test-key")
         parser = _build_parser()
         args = parser.parse_args(
             [
-                "review",
+                "review-mp",
                 "-g",
                 str(key_file),
                 "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
             ]
         )
-        assert args.command == "review"
+        assert args.command == "review-mp"
         assert (
             args.mp_url == "https://code.launchpad.net/~user/project/+git/repo/+merge/1"
         )
@@ -289,13 +287,13 @@ class TestBuildParser:
         assert args.gemini_api_key_file == str(key_file)
         assert args.model == "gemini-3-flash-preview"
 
-    def test_review_parses_dry_run(self, tmp_path: Path) -> None:
+    def test_review_mp_parses_dry_run(self, tmp_path: Path) -> None:
         key_file = tmp_path / "key"
         key_file.write_text("test-key")
         parser = _build_parser()
         args = parser.parse_args(
             [
-                "review",
+                "review-mp",
                 "--dry-run",
                 "-g",
                 str(key_file),
@@ -304,13 +302,13 @@ class TestBuildParser:
         )
         assert args.dry_run is True
 
-    def test_review_parses_launchpad_credentials(self, tmp_path: Path) -> None:
+    def test_review_mp_parses_launchpad_credentials(self, tmp_path: Path) -> None:
         key_file = tmp_path / "key"
         key_file.write_text("test-key")
         parser = _build_parser()
         args = parser.parse_args(
             [
-                "review",
+                "review-mp",
                 "--launchpad-credentials",
                 "/path/to/creds",
                 "-g",
@@ -320,13 +318,13 @@ class TestBuildParser:
         )
         assert args.launchpad_credentials == "/path/to/creds"
 
-    def test_review_parses_gemini_api_key_file(self, tmp_path: Path) -> None:
+    def test_review_mp_parses_gemini_api_key_file(self, tmp_path: Path) -> None:
         key_file = tmp_path / "gemini.key"
         key_file.write_text("my-secret-key\n")
         parser = _build_parser()
         args = parser.parse_args(
             [
-                "review",
+                "review-mp",
                 "--gemini-api-key-file",
                 str(key_file),
                 "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
@@ -334,7 +332,7 @@ class TestBuildParser:
         )
         assert args.gemini_api_key_file == str(key_file)
 
-    def test_review_model_defaults_to_gemini_3_flash_preview(
+    def test_review_mp_model_defaults_to_gemini_3_flash_preview(
         self, tmp_path: Path
     ) -> None:
         key_file = tmp_path / "key"
@@ -342,7 +340,7 @@ class TestBuildParser:
         parser = _build_parser()
         args = parser.parse_args(
             [
-                "review",
+                "review-mp",
                 "-g",
                 str(key_file),
                 "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
@@ -350,13 +348,13 @@ class TestBuildParser:
         )
         assert args.model == "gemini-3-flash-preview"
 
-    def test_review_parses_model(self, tmp_path: Path) -> None:
+    def test_review_mp_parses_model(self, tmp_path: Path) -> None:
         key_file = tmp_path / "key"
         key_file.write_text("test-key")
         parser = _build_parser()
         args = parser.parse_args(
             [
-                "review",
+                "review-mp",
                 "--model",
                 "gemini-2.5-pro",
                 "-g",
@@ -373,18 +371,20 @@ class TestMain:
             main([])
         assert exc_info.value.code == 1
 
-    def test_list_merge_proposals_delegates_to_handle_list_merge_proposals(
+    def test_list_lp_mps_delegates_to_handle_list_lp_mps(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         fake_lp = FakeLaunchpad(bot_username="review-bot")
         lp_mp = make_fake_mp(status="Needs review")
         fake_lp.add_merge_proposal("myproject", lp_mp)
         with fake_lp.patch_login_with():
-            main(["list-merge-proposals", "--status", "Needs review", "myproject"])
+            main(["list-lp-mps", "--status", "Needs review", "myproject"])
         captured = capsys.readouterr()
         assert lp_mp.web_link in captured.out
 
-    def test_review_command_delegates_to_handle_review(self, tmp_path: Path) -> None:
+    def test_review_mp_command_delegates_to_handle_review_mp(
+        self, tmp_path: Path
+    ) -> None:
         git = FakeGitClient()
         target_repo, source_repo = _setup_repos(tmp_path, git)
 
@@ -409,7 +409,7 @@ class TestMain:
         ):
             main(
                 [
-                    "review",
+                    "review-mp",
                     "--gemini-api-key-file",
                     str(api_key_file),
                     mp.url,
@@ -421,16 +421,16 @@ class TestMain:
         assert "Looks great." in comments[0].body
 
 
-class TestHandleListMergeProposals:
+class TestHandleListLpMps:
     def test_prints_output(self, capsys: pytest.CaptureFixture[str]) -> None:
         fake_lp = FakeLaunchpad(bot_username="review-bot")
         lp_mp = make_fake_mp(status="Needs review")
         fake_lp.add_merge_proposal("myproject", lp_mp)
         with fake_lp.patch_login_with():
             args = _build_parser().parse_args(
-                ["list-merge-proposals", "--status", "Needs review", "myproject"]
+                ["list-lp-mps", "--status", "Needs review", "myproject"]
             )
-            handle_list_merge_proposals(args)
+            handle_list_lp_mps(args)
         captured = capsys.readouterr()
         assert lp_mp.web_link in captured.out
         assert "Needs review" in captured.out
@@ -441,9 +441,9 @@ class TestHandleListMergeProposals:
         fake_lp.add_project("myproject")
         with fake_lp.patch_login_with():
             args = _build_parser().parse_args(
-                ["list-merge-proposals", "--status", "Needs review", "myproject"]
+                ["list-lp-mps", "--status", "Needs review", "myproject"]
             )
-            handle_list_merge_proposals(args)
+            handle_list_lp_mps(args)
         captured = capsys.readouterr()
         assert captured.out == ""
 
@@ -453,7 +453,7 @@ class TestHandleListMergeProposals:
         with fake_lp.patch_login_with():
             args = _build_parser().parse_args(
                 [
-                    "list-merge-proposals",
+                    "list-lp-mps",
                     "--launchpad-credentials",
                     "/path/to/creds",
                     "--status",
@@ -461,7 +461,7 @@ class TestHandleListMergeProposals:
                     "myproject",
                 ]
             )
-            handle_list_merge_proposals(args)
+            handle_list_lp_mps(args)
         assert fake_lp.credentials_file == "/path/to/creds"
 
     def test_shows_last_review_date(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -479,15 +479,15 @@ class TestHandleListMergeProposals:
         )
         with fake_lp.patch_login_with():
             args = _build_parser().parse_args(
-                ["list-merge-proposals", "--status", "Needs review", "myproject"]
+                ["list-lp-mps", "--status", "Needs review", "myproject"]
             )
-            handle_list_merge_proposals(args)
+            handle_list_lp_mps(args)
         captured = capsys.readouterr()
         assert lp_mp.web_link in captured.out
         assert review_date.isoformat() in captured.out
 
 
-class TestHandleReview:
+class TestHandleReviewMp:
     def test_posts_review_comment(self, tmp_path: Path) -> None:
         git = FakeGitClient()
         target_repo, source_repo = _setup_repos(tmp_path, git)
@@ -512,9 +512,9 @@ class TestHandleReview:
             patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
         ):
             args = _build_parser().parse_args(
-                ["review", "--gemini-api-key-file", str(api_key_file), mp.url]
+                ["review-mp", "--gemini-api-key-file", str(api_key_file), mp.url]
             )
-            handle_review(args)
+            handle_review_mp(args)
 
         comments = lp.get_comments_for(mp.api_url)
         assert len(comments) == 1
@@ -554,9 +554,9 @@ class TestHandleReview:
             patch("lp_ci_tools.cli.GeminiClient", return_value=llm),
         ):
             args = _build_parser().parse_args(
-                ["review", "--gemini-api-key-file", str(api_key_file), mp.url]
+                ["review-mp", "--gemini-api-key-file", str(api_key_file), mp.url]
             )
-            handle_review(args)
+            handle_review_mp(args)
 
         captured = capsys.readouterr()
         assert "Already reviewed, skipping." in captured.out
@@ -588,14 +588,14 @@ class TestHandleReview:
         ):
             args = _build_parser().parse_args(
                 [
-                    "review",
+                    "review-mp",
                     "--dry-run",
                     "--gemini-api-key-file",
                     str(api_key_file),
                     mp.url,
                 ]
             )
-            handle_review(args)
+            handle_review_mp(args)
 
         captured = capsys.readouterr()
         assert "Dry run review." in captured.out
