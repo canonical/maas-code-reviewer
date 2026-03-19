@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -1083,6 +1084,59 @@ class TestBuildParserReviewDiff:
         with pytest.raises(SystemExit):
             parser.parse_args(["review-diff", "patch.diff"])
 
+    def test_review_diff_json_output_defaults_to_none(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(["review-diff", "-g", str(key_file), "-"])
+        assert args.json_output is None
+
+    def test_review_diff_parses_json_output(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        output_file = tmp_path / "review.json"
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review-diff",
+                "-g",
+                str(key_file),
+                "--json-output",
+                str(output_file),
+                "-",
+            ]
+        )
+        assert args.json_output == str(output_file)
+
+
+_STRUCTURED_DIFF = (
+    "--- a/src/foo.py\n"
+    "+++ b/src/foo.py\n"
+    "@@ -1,3 +1,4 @@\n"
+    " import os\n"
+    "+import sys\n"
+    "\n"
+    " def main():\n"
+)
+
+_VALID_STRUCTURED_RESPONSE = json.dumps(
+    {
+        "general_comment": "Looks good.",
+        "inline_comments": {
+            "src/foo.py": {
+                "2": "Good addition.",
+            }
+        },
+    }
+)
+
+_EMPTY_STRUCTURED_RESPONSE = json.dumps(
+    {
+        "general_comment": "No issues.",
+        "inline_comments": {},
+    }
+)
+
 
 class TestHandleReviewDiff:
     def test_reads_diff_from_file_and_prints_review(
@@ -1244,6 +1298,225 @@ class TestHandleReviewDiff:
         prompt = llm._client.received_prompts[0]
         assert "broken" in prompt
         assert "fixed" in prompt
+
+
+class TestHandleReviewDiffJsonOutput:
+    def test_writes_json_file_when_json_output_given(self, tmp_path: Path) -> None:
+        """When --json-output is provided, a JSON file is written instead of stdout."""
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text(_STRUCTURED_DIFF)
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        output_file = tmp_path / "review.json"
+
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_STRUCTURED_RESPONSE)])
+
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    "--json-output",
+                    str(output_file),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
+
+        assert output_file.exists()
+        data = json.loads(output_file.read_text())
+        assert "general_comment" in data
+        assert "inline_comments" in data
+
+    def test_json_output_contains_general_comment(self, tmp_path: Path) -> None:
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text(_STRUCTURED_DIFF)
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        output_file = tmp_path / "review.json"
+
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_STRUCTURED_RESPONSE)])
+
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    "--json-output",
+                    str(output_file),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
+
+        data = json.loads(output_file.read_text())
+        assert data["general_comment"] == "Looks good."
+
+    def test_json_output_contains_inline_comments(self, tmp_path: Path) -> None:
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text(_STRUCTURED_DIFF)
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        output_file = tmp_path / "review.json"
+
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_STRUCTURED_RESPONSE)])
+
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    "--json-output",
+                    str(output_file),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
+
+        data = json.loads(output_file.read_text())
+        assert data["inline_comments"]["src/foo.py"]["2"] == "Good addition."
+
+    def test_json_output_does_not_print_to_stdout(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """When --json-output is given, nothing is printed to stdout."""
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text(_STRUCTURED_DIFF)
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        output_file = tmp_path / "review.json"
+
+        llm = FakeLLMClient([ScriptedResponse(text=_EMPTY_STRUCTURED_RESPONSE)])
+
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    "--json-output",
+                    str(output_file),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+
+    def test_no_json_output_still_prints_plain_text(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """When --json-output is absent, plain text review is printed to stdout."""
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text(_STRUCTURED_DIFF)
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        llm = FakeLLMClient([ScriptedResponse(text="Plain text review.")])
+
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
+
+        captured = capsys.readouterr()
+        assert "Plain text review." in captured.out
+        assert REVIEW_MARKER in captured.out
+
+    def test_json_output_uses_review_diff_structured(self, tmp_path: Path) -> None:
+        """When --json-output is set, review_diff_structured is called."""
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text(_STRUCTURED_DIFF)
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        output_file = tmp_path / "review.json"
+
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_STRUCTURED_RESPONSE)])
+
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    "--json-output",
+                    str(output_file),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
+
+        tool_names = {t.__name__ for t in llm._client.received_tools[0]}
+        assert "validate_review" in tool_names
+
+    def test_json_output_from_stdin(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--json-output works when reading the diff from stdin."""
+        import io
+
+        monkeypatch.setattr("sys.stdin", io.StringIO(_STRUCTURED_DIFF))
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        output_file = tmp_path / "review.json"
+
+        llm = FakeLLMClient([ScriptedResponse(text=_EMPTY_STRUCTURED_RESPONSE)])
+
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    "--json-output",
+                    str(output_file),
+                    "-",
+                ]
+            )
+            handle_review_diff(args)
+
+        assert output_file.exists()
+        data = json.loads(output_file.read_text())
+        assert data["general_comment"] == "No issues."
 
 
 class TestMainReviewDiff:

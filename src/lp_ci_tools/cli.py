@@ -12,7 +12,7 @@ from lp_ci_tools.launchpad_client import LaunchpadClient
 from lp_ci_tools.llm_client import GeminiClient
 from lp_ci_tools.models import Comment, MergeProposal
 from lp_ci_tools.repo_tools import RepoTools
-from lp_ci_tools.reviewer import REVIEW_MARKER, review_diff
+from lp_ci_tools.reviewer import REVIEW_MARKER, review_diff, review_diff_structured
 
 _LP_GIT_BASE = "https://git.launchpad.net/"
 
@@ -139,14 +139,27 @@ def handle_review_diff(args: argparse.Namespace) -> None:
     llm_client = GeminiClient(api_key=api_key, model=args.model)
 
     tools = RepoTools(repo_dir)
-    result = review_diff(
-        llm_client,
-        diff=diff,
-        description=None,
-        read_file=tools.read_file,
-        list_directory=tools.list_directory,
-    )
-    print(result)
+
+    if args.json_output:
+        import json
+
+        result_dict = review_diff_structured(
+            llm_client,
+            diff=diff,
+            description=None,
+            read_file=tools.read_file,
+            list_directory=tools.list_directory,
+        )
+        Path(args.json_output).write_text(json.dumps(result_dict, indent=2))
+    else:
+        result = review_diff(
+            llm_client,
+            diff=diff,
+            description=None,
+            read_file=tools.read_file,
+            list_directory=tools.list_directory,
+        )
+        print(result)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -289,6 +302,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Path to the local git repository (default: current working directory). "
             "Used for read_file and list_directory tool calls."
+        ),
+    )
+    diff_parser.add_argument(
+        "--json-output",
+        type=str,
+        default=None,
+        metavar="FILE",
+        help=(
+            "Write structured JSON review output to FILE instead of plain text to "
+            "stdout. The JSON contains a 'general_comment' and 'inline_comments' "
+            "keyed by file path and line number."
         ),
     )
     diff_parser.add_argument(

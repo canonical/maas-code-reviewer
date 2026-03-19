@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from lp_ci_tools.reviewer import (
     REVIEW_MARKER,
+    STRUCTURED_SYSTEM_INSTRUCTION,
     SYSTEM_INSTRUCTION,
     TRUNCATION_NOTE,
     _build_prompt,
+    _build_structured_prompt,
+    _extract_json,
     _truncate_diff,
     review_diff,
+    review_diff_structured,
 )
 from tests.fake_llm import FakeLLMClient, ScriptedResponse, ToolCall
 
@@ -329,3 +337,305 @@ class TestReviewDiff:
         )
         assert "No changes." in result
         assert result.startswith(REVIEW_MARKER)
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared by structured-review tests
+# ---------------------------------------------------------------------------
+
+_SIMPLE_DIFF = """\
+--- a/src/foo.py
++++ b/src/foo.py
+@@ -1,3 +1,4 @@
+ import os
++import sys
+
+ def main():
+"""
+
+_VALID_JSON_RESPONSE = json.dumps(
+    {
+        "general_comment": "Looks good.",
+        "inline_comments": {
+            "src/foo.py": {
+                "2": "Good addition.",
+            }
+        },
+    }
+)
+
+_EMPTY_INLINE_JSON_RESPONSE = json.dumps(
+    {
+        "general_comment": "No issues.",
+        "inline_comments": {},
+    }
+)
+
+
+class TestExtractJson:
+    def test_plain_json_unchanged(self) -> None:
+        text = '{"a": 1}'
+        assert _extract_json(text) == '{"a": 1}'
+
+    def test_strips_json_fence(self) -> None:
+        text = '```json\n{"a": 1}\n```'
+        assert _extract_json(text) == '{"a": 1}'
+
+    def test_strips_plain_fence(self) -> None:
+        text = '```\n{"a": 1}\n```'
+        assert _extract_json(text) == '{"a": 1}'
+
+    def test_strips_surrounding_whitespace(self) -> None:
+        text = '  \n  {"a": 1}  \n  '
+        assert _extract_json(text) == '{"a": 1}'
+
+    def test_strips_fence_and_whitespace(self) -> None:
+        text = '  ```json\n  {"a": 1}\n  ```  '
+        result = _extract_json(text)
+        assert result == '{"a": 1}'
+
+
+class TestBuildStructuredPrompt:
+    def test_contains_structured_system_instruction(self) -> None:
+        prompt = _build_structured_prompt("some diff", None)
+        assert STRUCTURED_SYSTEM_INSTRUCTION in prompt
+
+    def test_contains_diff(self) -> None:
+        prompt = _build_structured_prompt("my-diff-content", None)
+        assert "my-diff-content" in prompt
+
+    def test_diff_wrapped_in_code_block(self) -> None:
+        prompt = _build_structured_prompt("some diff", None)
+        assert "```\nsome diff\n```" in prompt
+
+    def test_includes_description_when_provided(self) -> None:
+        prompt = _build_structured_prompt("diff", "Fix the widget")
+        assert "Fix the widget" in prompt
+
+    def test_no_description_section_when_none(self) -> None:
+        prompt = _build_structured_prompt("diff", None)
+        assert "Fix the widget" not in prompt
+
+    def test_mentions_validate_review_tool(self) -> None:
+        prompt = _build_structured_prompt("diff", None)
+        assert "validate_review" in prompt
+
+    def test_includes_instructions_section(self) -> None:
+        prompt = _build_structured_prompt("diff", None)
+        assert "## Instructions" in prompt
+
+
+class TestReviewDiffStructured:
+    def test_returns_dict(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
+        result = review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        assert isinstance(result, dict)
+
+    def test_returns_general_comment(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
+        result = review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        assert result["general_comment"] == "Looks good."
+
+    def test_returns_inline_comments(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
+        result = review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        assert result["inline_comments"]["src/foo.py"]["2"] == "Good addition."
+
+    def test_empty_inline_comments_allowed(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_EMPTY_INLINE_JSON_RESPONSE)])
+        result = review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        assert result["inline_comments"] == {}
+
+    def test_validate_review_tool_provided_to_llm(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
+        review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        tool_names = {t.__name__ for t in llm._client.received_tools[0]}
+        assert "validate_review" in tool_names
+
+    def test_read_file_tool_provided_to_llm(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
+        review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        tool_names = {t.__name__ for t in llm._client.received_tools[0]}
+        assert "read_file" in tool_names
+
+    def test_list_directory_tool_provided_to_llm(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
+        review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        tool_names = {t.__name__ for t in llm._client.received_tools[0]}
+        assert "list_directory" in tool_names
+
+    def test_prompt_contains_diff(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_EMPTY_INLINE_JSON_RESPONSE)])
+        review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        assert _SIMPLE_DIFF in llm._client.received_prompts[0]
+
+    def test_prompt_contains_description(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_EMPTY_INLINE_JSON_RESPONSE)])
+        review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description="Add sys import",
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        assert "Add sys import" in llm._client.received_prompts[0]
+
+    def test_strips_json_fence_from_response(self) -> None:
+        fenced = f"```json\n{_VALID_JSON_RESPONSE}\n```"
+        llm = FakeLLMClient([ScriptedResponse(text=fenced)])
+        result = review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        assert result["general_comment"] == "Looks good."
+
+    def test_diff_truncated_when_exceeding_max(self) -> None:
+        big_diff = "x" * 200
+        # The LLM receives a truncated diff — we just need it to return valid JSON.
+        llm = FakeLLMClient([ScriptedResponse(text=_EMPTY_INLINE_JSON_RESPONSE)])
+        result = review_diff_structured(
+            llm,
+            diff=big_diff,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+            max_diff_chars=50,
+        )
+        # The truncated diff has no real files, so empty inline_comments is valid.
+        assert isinstance(result, dict)
+        prompt = llm._client.received_prompts[0]
+        assert "x" * 200 not in prompt
+        assert TRUNCATION_NOTE in prompt
+
+    def test_validate_review_tool_called_by_llm(self) -> None:
+        """When the scripted LLM calls validate_review, no exception is raised."""
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text=_VALID_JSON_RESPONSE,
+                    tool_calls=[
+                        ToolCall(
+                            name="validate_review",
+                            args={"json_text": _VALID_JSON_RESPONSE},
+                        )
+                    ],
+                )
+            ]
+        )
+        # Should not raise
+        result = review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        assert result["general_comment"] == "Looks good."
+
+    def test_validate_review_returns_empty_string_for_valid_json(self) -> None:
+        """validate_review tool call succeeds without exception for valid JSON."""
+        # The fake discards the tool return value, but the call must not raise.
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text=_VALID_JSON_RESPONSE,
+                    tool_calls=[
+                        ToolCall(
+                            name="validate_review",
+                            args={"json_text": _VALID_JSON_RESPONSE},
+                        )
+                    ],
+                )
+            ]
+        )
+        result = review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        assert isinstance(result, dict)
+
+    def test_raises_on_invalid_json_response(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="this is not json at all")])
+        with pytest.raises(Exception):
+            review_diff_structured(
+                llm,
+                diff=_SIMPLE_DIFF,
+                description=None,
+                read_file=_make_read_file(),
+                list_directory=_make_list_directory(),
+            )
+
+    def test_tool_calls_read_file_for_context(self) -> None:
+        rf = _make_read_file({"src/foo.py": "import os\nimport sys\n"})
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text=_VALID_JSON_RESPONSE,
+                    tool_calls=[
+                        ToolCall(name="read_file", args={"path": "src/foo.py"})
+                    ],
+                )
+            ]
+        )
+        result = review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=rf,
+            list_directory=_make_list_directory(),
+        )
+        assert result["general_comment"] == "Looks good."
