@@ -11,6 +11,7 @@ from lp_ci_tools.git import GitClient
 from lp_ci_tools.launchpad_client import LaunchpadClient
 from lp_ci_tools.llm_client import GeminiClient
 from lp_ci_tools.models import Comment, MergeProposal
+from lp_ci_tools.repo_tools import RepoTools
 from lp_ci_tools.reviewer import REVIEW_MARKER, review_diff
 
 _LP_GIT_BASE = "https://git.launchpad.net/"
@@ -50,37 +51,6 @@ def has_existing_review(client: LaunchpadClient, mp: MergeProposal) -> bool:
     return _find_last_review_date(comments, bot_username) is not None
 
 
-class RepoTools:
-    """File-system tools scoped to a single repository directory.
-
-    All paths are resolved and checked against ``repo_dir`` before any
-    operation is performed, so neither ``read_file`` nor ``list_directory``
-    can be used to escape outside the repository tree.
-    """
-
-    def __init__(self, repo_dir: Path, git: GitClient) -> None:
-        self._repo_dir = repo_dir
-        self._git = git
-
-    def read_file(self, path: str) -> str:
-        target = (self._repo_dir / path).resolve()
-        if not target.is_relative_to(self._repo_dir.resolve()):
-            return f"Error: path outside repository: {path}"
-        content = self._git.read_file(self._repo_dir, path)
-        if content is None:
-            return f"Error: file not found: {path}"
-        return content
-
-    def list_directory(self, path: str) -> str:
-        target = (self._repo_dir / path).resolve()
-        if not target.is_relative_to(self._repo_dir.resolve()):
-            return f"Error: path outside repository: {path}"
-        if not target.is_dir():
-            return f"Error: directory not found: {path}"
-        entries = sorted(entry.name for entry in target.iterdir())
-        return "\n".join(entries)
-
-
 def review_merge_proposal(
     lp: LaunchpadClient,
     git: GitClient,
@@ -109,7 +79,7 @@ def review_merge_proposal(
 
         diff = git.diff(repo_dir, "ORIG_HEAD", "HEAD")
 
-        tools = RepoTools(repo_dir, git)
+        tools = RepoTools(repo_dir)
         description = mp.description or mp.commit_message
         review_comment = review_diff(
             llm,
@@ -156,6 +126,29 @@ def handle_review_mp(args: argparse.Namespace) -> None:
         lp_client.post_comment(mp, result, subject="Automated review")
 
 
+def handle_review_diff(args: argparse.Namespace) -> None:
+    """Handle the review-diff subcommand."""
+    if args.diff_file == "-":
+        diff = sys.stdin.read()
+    else:
+        diff = Path(args.diff_file).read_text()
+
+    repo_dir = Path(args.repo_dir) if args.repo_dir else Path.cwd()
+
+    api_key = Path(args.gemini_api_key_file).read_text().strip()
+    llm_client = GeminiClient(api_key=api_key, model=args.model)
+
+    tools = RepoTools(repo_dir)
+    result = review_diff(
+        llm_client,
+        diff=diff,
+        description=None,
+        read_file=tools.read_file,
+        list_directory=tools.list_directory,
+    )
+    print(result)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -168,6 +161,8 @@ def main(argv: list[str] | None = None) -> None:
         handle_list_lp_mps(args)
     elif args.command == "review-mp":
         handle_review_mp(args)
+    elif args.command == "review-diff":
+        handle_review_diff(args)
 
 
 def _lp_repo_url(unique_name: str) -> str:
@@ -268,6 +263,37 @@ def _build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument(
         "mp_url",
         help="URL of the merge proposal to review.",
+    )
+
+    diff_parser = subparsers.add_parser(
+        "review-diff",
+        help="Review a unified diff file and print the result to stdout.",
+    )
+    diff_parser.add_argument(
+        "-g",
+        "--gemini-api-key-file",
+        type=str,
+        required=True,
+        help="Path to file containing the Gemini API key.",
+    )
+    diff_parser.add_argument(
+        "--model",
+        type=str,
+        default="gemini-3-flash-preview",
+        help="Gemini model to use (default: 'gemini-3-flash-preview').",
+    )
+    diff_parser.add_argument(
+        "--repo-dir",
+        type=str,
+        default=None,
+        help=(
+            "Path to the local git repository (default: current working directory). "
+            "Used for read_file and list_directory tool calls."
+        ),
+    )
+    diff_parser.add_argument(
+        "diff_file",
+        help="Path to a unified diff file, or '-' to read from stdin.",
     )
 
     return parser

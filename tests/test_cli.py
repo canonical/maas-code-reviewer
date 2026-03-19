@@ -9,12 +9,12 @@ import pytest
 from lp_ci_tools.cli import (
     REVIEW_MARKER,
     MergeProposalSummary,
-    RepoTools,
     _build_parser,
     _lp_repo_url,
     _ref_to_branch,
     format_merge_proposals,
     handle_list_lp_mps,
+    handle_review_diff,
     handle_review_mp,
     has_existing_review,
     list_merge_proposals,
@@ -1026,112 +1026,250 @@ class TestReviewMergeProposal:
         assert result == "[lp-ci-tools review]\n\nReview body here."
 
 
-class TestRepoTools:
-    def test_read_file_returns_content(self, tmp_path: Path) -> None:
-        """read_file returns the content of a file inside the repository."""
-        git = FakeGitClient()
-        git.create_repo(tmp_path)
-        git.add_commit(tmp_path, {"notes.txt": "hello\n"}, message="init")
+class TestBuildParserReviewDiff:
+    def test_review_diff_parses_diff_file(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text("--- a/f\n+++ b/f\n")
+        parser = _build_parser()
+        args = parser.parse_args(["review-diff", "-g", str(key_file), str(diff_file)])
+        assert args.command == "review-diff"
+        assert args.diff_file == str(diff_file)
 
-        tools = RepoTools(tmp_path, git)
+    def test_review_diff_parses_stdin_dash(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(["review-diff", "-g", str(key_file), "-"])
+        assert args.diff_file == "-"
 
-        assert tools.read_file("notes.txt") == "hello\n"
+    def test_review_diff_repo_dir_defaults_to_none(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(["review-diff", "-g", str(key_file), "-"])
+        assert args.repo_dir is None
 
-    def test_read_file_returns_error_for_missing_file(self, tmp_path: Path) -> None:
-        """read_file returns an error string when the file does not exist."""
-        git = FakeGitClient()
-        git.create_repo(tmp_path)
-        git.add_commit(tmp_path, {"file.txt": "x\n"}, message="init")
+    def test_review_diff_parses_repo_dir(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            ["review-diff", "-g", str(key_file), "--repo-dir", str(tmp_path), "-"]
+        )
+        assert args.repo_dir == str(tmp_path)
 
-        tools = RepoTools(tmp_path, git)
+    def test_review_diff_model_defaults_to_gemini_3_flash_preview(
+        self, tmp_path: Path
+    ) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(["review-diff", "-g", str(key_file), "-"])
+        assert args.model == "gemini-3-flash-preview"
 
-        assert tools.read_file("missing.txt") == "Error: file not found: missing.txt"
+    def test_review_diff_parses_model(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            ["review-diff", "--model", "gemini-2.5-pro", "-g", str(key_file), "-"]
+        )
+        assert args.model == "gemini-2.5-pro"
 
-    def test_read_file_rejects_dotdot_traversal(self, tmp_path: Path) -> None:
-        """read_file refuses a relative path that escapes the repository."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        secret = tmp_path / "credentials.txt"
-        secret.write_text("super-secret-api-key\n")
+    def test_review_diff_requires_gemini_api_key_file(self) -> None:
+        parser = _build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["review-diff", "patch.diff"])
 
-        git = FakeGitClient()
-        git.create_repo(repo)
-        git.add_commit(repo, {"file.txt": "safe\n"}, message="init")
 
-        tools = RepoTools(repo, git)
-        result = tools.read_file("../credentials.txt")
+class TestHandleReviewDiff:
+    def test_reads_diff_from_file_and_prints_review(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """review-diff reads a diff from a file path and prints the LLM review."""
+        diff_content = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text(diff_content)
 
-        assert "Error: path outside repository" in result
-        assert "super-secret-api-key" not in result
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
 
-    def test_read_file_rejects_absolute_path(self, tmp_path: Path) -> None:
-        """read_file refuses an absolute path pointing outside the repository."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        secret = tmp_path / "credentials.txt"
-        secret.write_text("super-secret-api-key\n")
+        llm = FakeLLMClient([ScriptedResponse(text="All good.")])
 
-        git = FakeGitClient()
-        git.create_repo(repo)
-        git.add_commit(repo, {"file.txt": "safe\n"}, message="init")
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
 
-        tools = RepoTools(repo, git)
-        result = tools.read_file(str(secret))
+        captured = capsys.readouterr()
+        assert "All good." in captured.out
+        assert REVIEW_MARKER in captured.out
 
-        assert "Error: path outside repository" in result
-        assert "super-secret-api-key" not in result
+    def test_reads_diff_from_stdin(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """review-diff reads a diff from stdin when diff_file is '-'."""
+        import io
 
-    def test_list_directory_returns_sorted_entries(self, tmp_path: Path) -> None:
-        """list_directory returns a sorted newline-joined list of entry names."""
-        git = FakeGitClient()
-        git.create_repo(tmp_path)
-        git.add_commit(
-            tmp_path,
-            {"src/beta.py": "pass\n", "src/alpha.py": "pass\n"},
-            message="init",
+        diff_content = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
+        monkeypatch.setattr("sys.stdin", io.StringIO(diff_content))
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        llm = FakeLLMClient([ScriptedResponse(text="Stdin review.")])
+
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    "-",
+                ]
+            )
+            handle_review_diff(args)
+
+        captured = capsys.readouterr()
+        assert "Stdin review." in captured.out
+
+    def test_uses_custom_repo_dir_for_tools(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The --repo-dir is used as the base for read_file and list_directory tools."""
+        repo_dir = tmp_path / "myrepo"
+        repo_dir.mkdir()
+        (repo_dir / "AGENTS.md").write_text("# Rules\nBe nice.\n")
+
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text("--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n")
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="Used context.",
+                    tool_calls=[ToolCall(name="read_file", args={"path": "AGENTS.md"})],
+                )
+            ]
         )
 
-        tools = RepoTools(tmp_path, git)
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(repo_dir),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
 
-        assert tools.list_directory("src") == "alpha.py\nbeta.py"
+        captured = capsys.readouterr()
+        assert "Used context." in captured.out
 
-    def test_list_directory_returns_error_for_missing_dir(self, tmp_path: Path) -> None:
-        """list_directory returns an error string when the directory does not exist."""
-        git = FakeGitClient()
-        git.create_repo(tmp_path)
-        git.add_commit(tmp_path, {"file.txt": "x\n"}, message="init")
+    def test_default_repo_dir_is_cwd(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When --repo-dir is omitted, the current working directory is used."""
+        monkeypatch.chdir(tmp_path)
 
-        tools = RepoTools(tmp_path, git)
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text("--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n")
 
-        assert (
-            tools.list_directory("nonexistent")
-            == "Error: directory not found: nonexistent"
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        llm = FakeLLMClient([ScriptedResponse(text="CWD review.")])
+
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                ["review-diff", "-g", str(api_key_file), str(diff_file)]
+            )
+            handle_review_diff(args)
+
+        captured = capsys.readouterr()
+        assert "CWD review." in captured.out
+
+    def test_diff_content_passed_to_llm(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The diff text from the file is included in the prompt sent to the LLM."""
+        diff_content = (
+            "--- a/widget.py\n+++ b/widget.py\n@@ -1 +1 @@\n-broken\n+fixed\n"
         )
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text(diff_content)
 
-    def test_list_directory_rejects_dotdot_traversal(self, tmp_path: Path) -> None:
-        """list_directory refuses a relative path that escapes the repository."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
 
-        git = FakeGitClient()
-        git.create_repo(repo)
-        git.add_commit(repo, {"file.txt": "safe\n"}, message="init")
+        llm = FakeLLMClient([ScriptedResponse(text="Nice fix.")])
 
-        tools = RepoTools(repo, git)
-        result = tools.list_directory("../..")
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
 
-        assert "Error: path outside repository" in result
+        prompt = llm._client.received_prompts[0]
+        assert "broken" in prompt
+        assert "fixed" in prompt
 
-    def test_list_directory_rejects_absolute_path(self, tmp_path: Path) -> None:
-        """list_directory refuses an absolute path pointing outside the repository."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
 
-        git = FakeGitClient()
-        git.create_repo(repo)
-        git.add_commit(repo, {"file.txt": "safe\n"}, message="init")
+class TestMainReviewDiff:
+    def test_review_diff_command_delegates_to_handle_review_diff(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        diff_content = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text(diff_content)
 
-        tools = RepoTools(repo, git)
-        result = tools.list_directory(str(tmp_path))
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
 
-        assert "Error: path outside repository" in result
+        llm = FakeLLMClient([ScriptedResponse(text="Main dispatch works.")])
+
+        with patch("lp_ci_tools.cli.GeminiClient", return_value=llm):
+            main(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    str(diff_file),
+                ]
+            )
+
+        captured = capsys.readouterr()
+        assert "Main dispatch works." in captured.out
