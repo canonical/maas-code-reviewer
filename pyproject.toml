@@ -1,6 +1,6 @@
 [project]
 name = "maas-code-reviewer"
-version = "0.1.0"
+version = "0.2.0"
 description = "An LLM-powered code reviewer for Launchpad merge proposals and GitHub pull requests. Built by the MAAS team at Canonical."
 readme = "README.md"
 authors = [
