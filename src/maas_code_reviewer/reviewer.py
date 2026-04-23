@@ -10,6 +10,12 @@ from maas_code_reviewer.review_schema import validate_review_json
 
 REVIEW_MARKER = "[maas-code-reviewer review]"
 
+REVIEW_PREAMBLE = """\
+> LLM-generated review from https://github.com/canonical/maas-code-reviewer.
+> Intended to assist a human reviewer, not replace one — suggestions may be
+> incorrect, please verify before acting.
+"""
+
 STRUCTURED_SYSTEM_INSTRUCTION = """\
 You are an experienced software engineer performing a code review. Your job is to:
 
@@ -182,7 +188,7 @@ def review_diff(
     tools: list[Callable[..., str]] = [read_file, list_directory]
     review_text = llm.review(prompt, tools)
 
-    return f"{REVIEW_MARKER}\n\n{review_text}"
+    return f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\n{review_text}"
 
 
 def _build_structured_prompt(diff: str, description: str | None) -> str:
