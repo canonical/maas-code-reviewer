@@ -26,6 +26,7 @@ from maas_code_reviewer.cli import (
     review_merge_proposal,
 )
 from maas_code_reviewer.models import Comment
+from maas_code_reviewer.reviewer import REVIEW_PREAMBLE
 from tests.factory import make_mp
 from tests.fake_git import FakeGitClient
 from tests.fake_github import FakeGitHubClient
@@ -1028,7 +1029,10 @@ class TestReviewMergeProposal:
 
         result = review_merge_proposal(lp, git, llm, mp.url)
 
-        assert result == "[maas-code-reviewer review]\n\nReview body here."
+        expected = (
+            f"[maas-code-reviewer review]\n\n{REVIEW_PREAMBLE}\n\nReview body here."
+        )
+        assert result == expected
 
 
 class TestBuildParserReviewDiff:

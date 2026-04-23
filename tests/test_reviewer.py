@@ -7,6 +7,7 @@ import pytest
 
 from maas_code_reviewer.reviewer import (
     REVIEW_MARKER,
+    REVIEW_PREAMBLE,
     STRUCTURED_SYSTEM_INSTRUCTION,
     SYSTEM_INSTRUCTION,
     TRUNCATION_NOTE,
@@ -129,7 +130,7 @@ class TestReviewDiff:
             read_file=_make_read_file(),
             list_directory=_make_list_directory(),
         )
-        assert f"{REVIEW_MARKER}\n\nReview body." == result
+        assert f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\nReview body." == result
 
     def test_prompt_contains_diff(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
