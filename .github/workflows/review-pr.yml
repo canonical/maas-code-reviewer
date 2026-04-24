@@ -1,4 +1,4 @@
-name: AI Code Review
+name: LLM Code Review
 
 # Use pull_request_target so the workflow always runs from the main branch.
 # This gives it access to repository secrets while still being triggered by
@@ -11,10 +11,18 @@ permissions:
   contents: read
   pull-requests: write
 
-# ---- Configuration ----
-# Change the model to use for reviews here.
 env:
-  MODEL: gemini-2.5-flash
+  # Model can be any Gemini model name that your GEMINI_API_KEY has access to.
+  # For example:
+  #  - gemini-3.1-pro-preview
+  #  - gemini-3.1-pro-preview-customtools
+  #  - gemini-3-flash-preview
+  #  - gemini-3-flash-lite-preview
+  #  - gemini-2.5-pro
+  #  - gemini-2.5-flash
+  MODEL: gemini-3-flash-preview
+  # Snap channel should normally be stable. We use beta here for testing.
+  SNAP_CHANNEL: edge
 
 jobs:
   review:
@@ -28,42 +36,23 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      # 2. Check out the maas-code-reviewer tool from its canonical repo.
-      #    In the future this will likely become a snap or a dedicated GitHub
-      #    Action, but for now we install from source.
-      - name: Check out maas-code-reviewer
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          repository: canonical/maas-code-reviewer
-          path: maas-code-reviewer
-
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-
       - name: Install maas-code-reviewer
-        run: uv sync --frozen
-        working-directory: maas-code-reviewer
+        run: sudo snap install maas-code-reviewer --channel "$SNAP_CHANNEL"
 
       - name: Write Gemini API key to file
         run: printenv GEMINI_API_KEY > "$RUNNER_TEMP/gemini-api-key"
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-      - name: Run AI review
+      - name: Run maas-code-reviewer
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          uv run maas-code-reviewer review-pr \
+          maas-code-reviewer review-pr \
             -g "$RUNNER_TEMP/gemini-api-key" \
             --model "$MODEL" \
             --repo-dir "$GITHUB_WORKSPACE" \
             "https://github.com/${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
-        working-directory: maas-code-reviewer
 
       - name: Clean up API key
         if: always()
