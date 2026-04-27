@@ -128,7 +128,7 @@ maas-code-reviewer list-lp-mps --status "Needs review" maas
 Review a single Launchpad merge proposal using Gemini.
 
 ```sh
-maas-code-reviewer review-mp [--launchpad-credentials FILE] -g KEY_FILE [--model MODEL] [--dry-run] MP_URL
+maas-code-reviewer review-mp [--launchpad-credentials FILE] -g KEY_FILE [--model MODEL] [--dry-run] [--metrics FILE] MP_URL
 ```
 
 | Argument | Description |
@@ -137,6 +137,7 @@ maas-code-reviewer review-mp [--launchpad-credentials FILE] -g KEY_FILE [--model
 | `-g`, `--gemini-api-key-file` | **(required)** Path to file containing the Gemini API key. |
 | `--model MODEL` | Gemini model to use (default: `gemini-3-flash-preview`). |
 | `--dry-run` | Print the review to stdout instead of posting it as a comment. |
+| `--metrics FILE` | Write review metrics as JSON to `FILE` (see [Review Metrics](#review-metrics)). |
 | `--launchpad-credentials FILE` | Path to Launchpad credentials file. |
 
 The tool will:
@@ -161,7 +162,7 @@ Review a unified diff file and print the result to stdout. The diff can be
 read from a file or from stdin (pass `-` as the filename).
 
 ```sh
-maas-code-reviewer review-diff -g KEY_FILE [--model MODEL] [--repo-dir DIR] [--json-output FILE] DIFF_FILE
+maas-code-reviewer review-diff -g KEY_FILE [--model MODEL] [--repo-dir DIR] [--json-output FILE] [--metrics FILE] DIFF_FILE
 ```
 
 | Argument | Description |
@@ -171,6 +172,7 @@ maas-code-reviewer review-diff -g KEY_FILE [--model MODEL] [--repo-dir DIR] [--j
 | `--model MODEL` | Gemini model to use (default: `gemini-3-flash-preview`). |
 | `--repo-dir DIR` | Path to the local git repository (default: current working directory). Used for `read_file` and `list_directory` tool calls. |
 | `--json-output FILE` | Write structured JSON review output to `FILE` instead of plain text to stdout. |
+| `--metrics FILE` | Write review metrics as JSON to `FILE` (see [Review Metrics](#review-metrics)). |
 
 When `--json-output` is provided, the LLM produces structured output with a
 general comment and inline comments keyed by file path and line number (see
@@ -195,7 +197,7 @@ Review a GitHub pull request using Gemini and post the review via the GitHub
 API.
 
 ```sh
-maas-code-reviewer review-pr -g KEY_FILE [--github-token TOKEN] [--model MODEL] [--repo-dir DIR] [--dry-run] PR_URL
+maas-code-reviewer review-pr -g KEY_FILE [--github-token TOKEN] [--model MODEL] [--repo-dir DIR] [--dry-run] [--metrics FILE] PR_URL
 ```
 
 | Argument | Description |
@@ -206,6 +208,7 @@ maas-code-reviewer review-pr -g KEY_FILE [--github-token TOKEN] [--model MODEL] 
 | `--model MODEL` | Gemini model to use (default: `gemini-3-flash-preview`). |
 | `--repo-dir DIR` | Path to a local checkout of the repository (default: current working directory). Used for `read_file` and `list_directory` tool calls. The caller is responsible for having the repo checked out already. |
 | `--dry-run` | Print the review JSON to stdout instead of posting it. |
+| `--metrics FILE` | Write review metrics as JSON to `FILE` (see [Review Metrics](#review-metrics)). |
 
 The tool will:
 
@@ -254,6 +257,46 @@ the LLM produces structured output with this schema:
 - `inline_comments` — A map from file path to a map from line number string
   to comment string. Only file paths and line numbers that appear in the diff
   are valid. Use `{}` for no inline comments.
+
+## Review Metrics
+
+All three review commands (`review-mp`, `review-diff`, `review-pr`) accept an
+optional `--metrics FILE` flag. When provided, a JSON file is written after
+the review completes containing usage and context metrics:
+
+```json
+{
+  "model_name": "gemini-3-flash-preview",
+  "tokens_thinking": 1234,
+  "tokens_input": 5678,
+  "tokens_output": 910,
+  "files_read": 3,
+  "agents_md_read": true,
+  "diff_lines": 42,
+  "diff_size_bytes": 2048
+}
+```
+
+| Field | Description |
+|---|---|
+| `model_name` | The Gemini model used for the review. |
+| `tokens_thinking` | Number of internal thinking tokens used by the model. |
+| `tokens_input` | Number of input (prompt) tokens. |
+| `tokens_output` | Number of output (completion) tokens. |
+| `files_read` | Number of files read via the `read_file` tool during the review. |
+| `agents_md_read` | Whether an `AGENTS.md` file was read during the review. |
+| `diff_lines` | Number of lines in the original diff (before any truncation). |
+| `diff_size_bytes` | Size of the original diff in bytes (UTF-8 encoded). |
+
+The metrics file is written after the review completes. If the review is
+skipped (e.g. an MP was already reviewed), no metrics file is written.
+
+**Example:**
+
+```sh
+maas-code-reviewer review-diff -g gemini-api-key --metrics metrics.json changes.diff
+cat metrics.json
+```
 
 ## Environment Variables
 

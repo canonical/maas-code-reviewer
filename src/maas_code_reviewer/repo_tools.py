@@ -15,6 +15,8 @@ class RepoTools:
 
     def __init__(self, repo_dir: Path) -> None:
         self._repo_dir = repo_dir.resolve()
+        self.files_read_count: int = 0
+        self.agents_md_read: bool = False
 
     def read_file(self, path: str) -> str:
         print(f"Tool call: read_file(path={path!r})", file=sys.stderr)
@@ -23,6 +25,9 @@ class RepoTools:
             return f"Error: path outside repository: {path}"
         if not target.is_file():
             return f"Error: file not found: {path}"
+        self.files_read_count += 1
+        if target.name == "AGENTS.md":
+            self.agents_md_read = True
         return target.read_text()
 
     def list_directory(self, path: str) -> str:

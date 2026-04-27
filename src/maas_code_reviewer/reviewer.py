@@ -6,6 +6,7 @@ import sys
 from collections.abc import Callable
 
 from maas_code_reviewer.llm_client import GeminiClient
+from maas_code_reviewer.metrics import ReviewMetrics
 from maas_code_reviewer.review_schema import validate_review_json
 
 REVIEW_MARKER = "[maas-code-reviewer review]"
@@ -88,6 +89,7 @@ def review_diff_structured(
     read_file: Callable[[str], str],
     list_directory: Callable[[str], str],
     max_diff_chars: int = 30_000,
+    metrics: ReviewMetrics | None = None,
 ) -> dict:
     """Orchestrate a structured code review of *diff* using the given LLM.
 
@@ -126,6 +128,8 @@ def review_diff_structured(
     tools: list[Callable[..., str]] = [validate_review, read_file, list_directory]
     raw_text = llm.review(prompt, tools)
 
+    _populate_metrics(metrics, llm, diff)
+
     cleaned = _extract_json(raw_text)
     return json.loads(cleaned)
 
@@ -157,6 +161,7 @@ def review_diff(
     read_file: Callable[[str], str],
     list_directory: Callable[[str], str],
     max_diff_chars: int = 30_000,
+    metrics: ReviewMetrics | None = None,
 ) -> str:
     """Orchestrate a code review of *diff* using the given LLM.
 
@@ -187,6 +192,8 @@ def review_diff(
 
     tools: list[Callable[..., str]] = [read_file, list_directory]
     review_text = llm.review(prompt, tools)
+
+    _populate_metrics(metrics, llm, diff)
 
     return f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\n{review_text}"
 
@@ -249,6 +256,20 @@ def _build_prompt(diff: str, description: str | None) -> str:
     )
 
     return "".join(parts)
+
+
+def _populate_metrics(
+    metrics: ReviewMetrics | None, llm: GeminiClient, diff: str
+) -> None:
+    """Fill *metrics* with LLM token counts and diff size info."""
+    if metrics is None:
+        return
+    metrics.model_name = llm.model
+    metrics.tokens_thinking = llm.last_tokens_thinking
+    metrics.tokens_input = llm.last_tokens_input
+    metrics.tokens_output = llm.last_tokens_output
+    metrics.diff_lines = len(diff.splitlines())
+    metrics.diff_size_bytes = len(diff.encode("utf-8"))
 
 
 def _truncate_diff(diff: str, max_chars: int) -> str:

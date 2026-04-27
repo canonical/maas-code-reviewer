@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from maas_code_reviewer.metrics import ReviewMetrics
 from maas_code_reviewer.reviewer import (
     REVIEW_MARKER,
     REVIEW_PREAMBLE,
@@ -635,3 +636,74 @@ class TestReviewDiffStructured:
             list_directory=_make_list_directory(),
         )
         assert result["general_comment"] == "Looks good."
+
+
+class TestReviewDiffMetrics:
+    def test_review_diff_populates_metrics(self) -> None:
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="ok", tokens_input=10, tokens_output=20, tokens_thinking=30
+                )
+            ]
+        )
+        metrics = ReviewMetrics()
+        review_diff(
+            llm,
+            diff="some diff",
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+            metrics=metrics,
+        )
+        assert metrics.model_name == "gemini-3-flash-preview"
+        assert metrics.tokens_input == 10
+        assert metrics.tokens_output == 20
+        assert metrics.tokens_thinking == 30
+
+    def test_review_diff_structured_populates_metrics(self) -> None:
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text=_VALID_JSON_RESPONSE,
+                    tokens_input=100,
+                    tokens_output=200,
+                    tokens_thinking=300,
+                )
+            ]
+        )
+        metrics = ReviewMetrics()
+        review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+            metrics=metrics,
+        )
+        assert metrics.model_name == "gemini-3-flash-preview"
+        assert metrics.tokens_input == 100
+        assert metrics.tokens_output == 200
+        assert metrics.tokens_thinking == 300
+
+    def test_review_diff_none_metrics_no_error(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        review_diff(
+            llm,
+            diff="d",
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        # No error — backwards compatible
+
+    def test_review_diff_structured_none_metrics_no_error(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
+        review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        # No error — backwards compatible

@@ -23,6 +23,10 @@ class ScriptedResponse:
 
     text: str
     tool_calls: list[ToolCall] = field(default_factory=list)
+    tokens_input: int = 0
+    tokens_output: int = 0
+    tokens_thinking: int = 0
+    no_usage_metadata: bool = False
 
 
 class FakeGenaiClient:
@@ -108,10 +112,15 @@ class _FakeChat:
                     ),
                 ),
             ],
-            usage_metadata=types.GenerateContentResponseUsageMetadata(
-                prompt_token_count=0,
-                candidates_token_count=0,
-                total_token_count=0,
+            usage_metadata=None
+            if response.no_usage_metadata
+            else types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=response.tokens_input,
+                candidates_token_count=response.tokens_output,
+                thoughts_token_count=response.tokens_thinking,
+                total_token_count=response.tokens_input
+                + response.tokens_output
+                + response.tokens_thinking,
             ),
         )
 

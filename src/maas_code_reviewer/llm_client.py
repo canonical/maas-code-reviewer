@@ -29,6 +29,25 @@ class GeminiClient:
         else:
             self._client = genai.Client(api_key=api_key)  # pragma: no cover
         self._model = model
+        self._last_tokens_input: int = 0
+        self._last_tokens_output: int = 0
+        self._last_tokens_thinking: int = 0
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def last_tokens_input(self) -> int:
+        return self._last_tokens_input
+
+    @property
+    def last_tokens_output(self) -> int:
+        return self._last_tokens_output
+
+    @property
+    def last_tokens_thinking(self) -> int:
+        return self._last_tokens_thinking
 
     def review(self, prompt: str, tools: list[Callable[..., Any]]) -> str:
         config = types.GenerateContentConfig(
@@ -45,15 +64,28 @@ class GeminiClient:
 
         usage = response.usage_metadata
         if usage is not None:
-            thoughts_count = usage.thoughts_token_count or 0
-            thoughts_info = f", thinking: {thoughts_count}" if thoughts_count else ""
-            print(
-                f"Tokens used — input: {usage.prompt_token_count}, "
-                f"output: {usage.candidates_token_count}"
-                f"{thoughts_info}, "
-                f"total: {usage.total_token_count}",
-                file=sys.stderr,
-            )
+            self._last_tokens_input = usage.prompt_token_count or 0
+            self._last_tokens_output = usage.candidates_token_count or 0
+            self._last_tokens_thinking = usage.thoughts_token_count or 0
+        else:
+            self._last_tokens_input = 0
+            self._last_tokens_output = 0
+            self._last_tokens_thinking = 0
+
+        total_token_count = (
+            self._last_tokens_input
+            + self._last_tokens_output
+            + self._last_tokens_thinking
+        )
+        thoughts_count = self._last_tokens_thinking
+        thoughts_info = f", thinking: {thoughts_count}" if thoughts_count else ""
+        print(
+            f"Tokens used — input: {self._last_tokens_input}, "
+            f"output: {self._last_tokens_output}"
+            f"{thoughts_info}, "
+            f"total: {total_token_count}",
+            file=sys.stderr,
+        )
 
         return response.text or ""
 

@@ -4,6 +4,7 @@
 from google.genai import types
 
 from maas_code_reviewer.llm_client import _print_thoughts
+from tests.fake_llm import FakeLLMClient, ScriptedResponse
 
 
 class TestPrintThoughts:
@@ -76,3 +77,36 @@ class TestPrintThoughts:
         # AFC-step thought is printed; user-role entry and non-thought final
         # part are both skipped.
         assert captured.err == "[Thinking (tool step)]\nI need to call read_file.\n\n"
+
+
+class TestTokenCountProperties:
+    def test_token_counts_reflect_scripted_values(self) -> None:
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="ok", tokens_input=100, tokens_output=50, tokens_thinking=200
+                )
+            ]
+        )
+        llm.review("prompt", [])
+        assert llm.last_tokens_input == 100
+        assert llm.last_tokens_output == 50
+        assert llm.last_tokens_thinking == 200
+
+    def test_token_counts_default_to_zero(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        llm.review("prompt", [])
+        assert llm.last_tokens_input == 0
+        assert llm.last_tokens_output == 0
+        assert llm.last_tokens_thinking == 0
+
+    def test_token_counts_reset_when_usage_metadata_is_none(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok", no_usage_metadata=True)])
+        llm.review("prompt", [])
+        assert llm.last_tokens_input == 0
+        assert llm.last_tokens_output == 0
+        assert llm.last_tokens_thinking == 0
+
+    def test_model_property_returns_model_name(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        assert llm.model == "gemini-3-flash-preview"
