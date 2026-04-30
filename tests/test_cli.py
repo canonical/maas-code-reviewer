@@ -13,6 +13,7 @@ from maas_code_reviewer.cli import (
     REVIEW_MARKER,
     MergeProposalSummary,
     _build_parser,
+    _get_gemini_api_key,
     _lp_repo_url,
     _ref_to_branch,
     format_merge_proposals,
@@ -638,6 +639,93 @@ class TestHandleReviewMp:
         assert "Dry run review." in captured.out
         assert len(lp.get_comments_for(mp.api_url)) == 0
 
+    def test_missing_gemini_api_key_exits_with_error(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """When no Gemini API key is available, the command exits with an error."""
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+        args = _build_parser().parse_args(
+            [
+                "review-mp",
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            handle_review_mp(args)
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "GEMINI_API_KEY" in captured.err
+
+
+class TestGetGeminiApiKey:
+    def _make_args(
+        self, gemini_api_key_file: str | None = None
+    ) -> argparse.Namespace:
+        return argparse.Namespace(gemini_api_key_file=gemini_api_key_file)
+
+    def test_reads_key_from_file(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("my-secret-key\n")
+        assert _get_gemini_api_key(self._make_args(str(key_file))) == "my-secret-key"
+
+    def test_strips_whitespace_from_file(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("   my-key   \n\n")
+        assert _get_gemini_api_key(self._make_args(str(key_file))) == "my-key"
+
+    def test_empty_file_returns_none(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("")
+        assert _get_gemini_api_key(self._make_args(str(key_file))) is None
+
+    def test_whitespace_only_file_returns_none(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("   \n  \t\n")
+        assert _get_gemini_api_key(self._make_args(str(key_file))) is None
+
+    def test_missing_file_returns_none(self, tmp_path: Path) -> None:
+        missing = tmp_path / "does-not-exist"
+        assert _get_gemini_api_key(self._make_args(str(missing))) is None
+
+    def test_reads_from_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "env-key")
+        assert _get_gemini_api_key(self._make_args()) == "env-key"
+
+    def test_strips_whitespace_from_env_var(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "  env-key\n")
+        assert _get_gemini_api_key(self._make_args()) == "env-key"
+
+    def test_empty_env_var_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "")
+        assert _get_gemini_api_key(self._make_args()) is None
+
+    def test_whitespace_only_env_var_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "   \n")
+        assert _get_gemini_api_key(self._make_args()) is None
+
+    def test_no_file_no_env_var_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        assert _get_gemini_api_key(self._make_args()) is None
+
+    def test_file_takes_precedence_over_env_var(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "env-key")
+        key_file = tmp_path / "key"
+        key_file.write_text("file-key")
+        assert _get_gemini_api_key(self._make_args(str(key_file))) == "file-key"
+
 
 class TestLpRepoUrl:
     def test_prepends_git_base(self) -> None:
@@ -1150,10 +1238,10 @@ class TestBuildParserReviewDiff:
         )
         assert args.model == "gemini-2.5-pro"
 
-    def test_review_diff_requires_gemini_api_key_file(self) -> None:
+    def test_review_diff_gemini_api_key_file_defaults_to_none(self) -> None:
         parser = _build_parser()
-        with pytest.raises(SystemExit):
-            parser.parse_args(["review-diff", "patch.diff"])
+        args = parser.parse_args(["review-diff", "patch.diff"])
+        assert args.gemini_api_key_file is None
 
     def test_review_diff_json_output_defaults_to_none(self, tmp_path: Path) -> None:
         key_file = tmp_path / "key"
@@ -1605,6 +1693,26 @@ class TestHandleReviewDiffJsonOutput:
         data = json.loads(output_file.read_text())
         assert data["general_comment"] == "No issues."
 
+    def test_missing_gemini_api_key_exits_with_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """When no Gemini API key is available, the command exits with an error."""
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text("--- a/foo\n+++ b/foo\n")
+
+        args = _build_parser().parse_args(["review-diff", str(diff_file)])
+
+        with pytest.raises(SystemExit) as exc_info:
+            handle_review_diff(args)
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "GEMINI_API_KEY" in captured.err
+
 
 class TestMainReviewDiff:
     def test_review_diff_command_delegates_to_handle_review_diff(
@@ -1680,11 +1788,11 @@ class TestBuildParserReviewPr:
         with pytest.raises(SystemExit):
             _build_parser().parse_args(["review-pr", "-g", "key.txt"])
 
-    def test_review_pr_requires_gemini_api_key_file(self) -> None:
-        with pytest.raises(SystemExit):
-            _build_parser().parse_args(
-                ["review-pr", "https://github.com/owner/repo/pull/1"]
-            )
+    def test_review_pr_gemini_api_key_file_defaults_to_none(self) -> None:
+        args = _build_parser().parse_args(
+            ["review-pr", "https://github.com/owner/repo/pull/1"]
+        )
+        assert args.gemini_api_key_file is None
 
     def test_review_pr_github_token_defaults_to_none(self) -> None:
         args = _build_parser().parse_args(
@@ -1808,16 +1916,18 @@ class TestHandleReviewPr:
         *,
         pr_url: str = "https://github.com/owner/repo/pull/42",
         github_token: str | None = "ghp_test",
+        gemini_api_key_file: str | None = "__default__",
         repo_dir: str | None = None,
         dry_run: bool = False,
     ) -> argparse.Namespace:
-        api_key_file = tmp_path / "api_key.txt"
-        api_key_file.write_text("fake-key\n")
+        if gemini_api_key_file == "__default__":
+            api_key_file = tmp_path / "api_key.txt"
+            api_key_file.write_text("fake-key\n")
+            gemini_api_key_file = str(api_key_file)
         return _build_parser().parse_args(
             [
                 "review-pr",
-                "-g",
-                str(api_key_file),
+                *(["-g", gemini_api_key_file] if gemini_api_key_file else []),
                 *(["--github-token", github_token] if github_token else []),
                 *(["--repo-dir", repo_dir] if repo_dir else []),
                 *(["--dry-run"] if dry_run else []),
@@ -1987,6 +2097,55 @@ class TestHandleReviewPr:
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
         assert "GITHUB_TOKEN" in captured.err
+
+    def test_gemini_api_key_read_from_env_var(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When --gemini-api-key-file is absent, GEMINI_API_KEY env var is used."""
+        monkeypatch.setenv("GEMINI_API_KEY", "env-gemini-key")
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        captured_keys: list[str] = []
+
+        def fake_gemini_client(*, api_key: str, model: str) -> object:
+            captured_keys.append(api_key)
+            return llm
+
+        with (
+            patch(
+                "maas_code_reviewer.cli.GeminiClient", side_effect=fake_gemini_client
+            ),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(
+                self._make_args(
+                    tmp_path, gemini_api_key_file=None, repo_dir=str(tmp_path)
+                )
+            )
+
+        assert captured_keys == ["env-gemini-key"]
+
+    def test_missing_gemini_api_key_exits_with_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """When no Gemini API key is available, the command exits with an error."""
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+        with pytest.raises(SystemExit) as exc_info:
+            handle_review_pr(
+                self._make_args(
+                    tmp_path, gemini_api_key_file=None, repo_dir=str(tmp_path)
+                )
+            )
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "GEMINI_API_KEY" in captured.err
 
     def test_description_passed_to_llm(self, tmp_path: Path) -> None:
         """The PR description is included in the LLM prompt."""

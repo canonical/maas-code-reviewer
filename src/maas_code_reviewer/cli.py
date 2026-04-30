@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import NoReturn
 
 from maas_code_reviewer.git import GitClient
 from maas_code_reviewer.github_client import GitHubClient, parse_pr_url
@@ -127,9 +128,11 @@ def handle_list_lp_mps(args: argparse.Namespace) -> None:
 
 def handle_review_mp(args: argparse.Namespace) -> None:
     """Handle the review-mp subcommand."""
+    api_key = _get_gemini_api_key(args)
+    if api_key is None:
+        _exit_missing_gemini_api_key()
     lp_client = LaunchpadClient(credentials_file=args.launchpad_credentials)
     git_client = GitClient()
-    api_key = Path(args.gemini_api_key_file).read_text().strip()
     llm_client = GeminiClient(api_key=api_key, model=args.model)
     metrics = ReviewMetrics()
     result = review_merge_proposal(
@@ -148,6 +151,10 @@ def handle_review_mp(args: argparse.Namespace) -> None:
 
 def handle_review_diff(args: argparse.Namespace) -> None:
     """Handle the review-diff subcommand."""
+    api_key = _get_gemini_api_key(args)
+    if api_key is None:
+        _exit_missing_gemini_api_key()
+
     if args.diff_file == "-":
         diff = sys.stdin.read()
     else:
@@ -155,7 +162,6 @@ def handle_review_diff(args: argparse.Namespace) -> None:
 
     repo_dir = Path(args.repo_dir) if args.repo_dir else Path.cwd()
 
-    api_key = Path(args.gemini_api_key_file).read_text().strip()
     llm_client = GeminiClient(api_key=api_key, model=args.model)
 
     tools = RepoTools(repo_dir)
@@ -201,6 +207,10 @@ def handle_review_pr(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
+    api_key = _get_gemini_api_key(args)
+    if api_key is None:
+        _exit_missing_gemini_api_key()
+
     github_client = GitHubClient(token)
     diff = github_client.get_pr_diff(owner, repo, pr_number)
     description = github_client.get_pr_description(owner, repo, pr_number)
@@ -208,7 +218,6 @@ def handle_review_pr(args: argparse.Namespace) -> None:
     repo_dir = Path(args.repo_dir) if args.repo_dir else Path.cwd()
     tools = RepoTools(repo_dir)
 
-    api_key = Path(args.gemini_api_key_file).read_text().strip()
     llm_client = GeminiClient(api_key=api_key, model=args.model)
 
     metrics = ReviewMetrics()
@@ -260,6 +269,29 @@ def main(argv: list[str] | None = None) -> None:
         handle_review_diff(args)
     elif args.command == "review-pr":
         handle_review_pr(args)
+
+
+def _get_gemini_api_key(args: argparse.Namespace) -> str | None:
+    """Return the Gemini API key from --gemini-api-key-file or the environment.
+
+    Returns ``None`` if neither source provides a non-empty key.
+    """
+    if args.gemini_api_key_file:
+        path = Path(args.gemini_api_key_file)
+        if not path.is_file():
+            return None
+        return path.read_text().strip() or None
+    return os.environ.get("GEMINI_API_KEY", "").strip() or None
+
+
+def _exit_missing_gemini_api_key() -> NoReturn:
+    """Print an error message about a missing Gemini API key and exit."""
+    print(
+        "Error: No Gemini API key configured. Use --gemini-api-key-file or set "
+        "the GEMINI_API_KEY environment variable.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def _lp_repo_url(unique_name: str) -> str:
@@ -338,8 +370,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "-g",
         "--gemini-api-key-file",
         type=str,
-        required=True,
-        help="Path to file containing the Gemini API key.",
+        default=None,
+        help=(
+            "Path to file containing the Gemini API key. If not provided, "
+            "read from the GEMINI_API_KEY environment variable."
+        ),
     )
     review_parser.add_argument(
         "--model",
@@ -373,8 +408,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "-g",
         "--gemini-api-key-file",
         type=str,
-        required=True,
-        help="Path to file containing the Gemini API key.",
+        default=None,
+        help=(
+            "Path to file containing the Gemini API key. If not provided, "
+            "read from the GEMINI_API_KEY environment variable."
+        ),
     )
     diff_parser.add_argument(
         "--model",
@@ -422,8 +460,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "-g",
         "--gemini-api-key-file",
         type=str,
-        required=True,
-        help="Path to file containing the Gemini API key.",
+        default=None,
+        help=(
+            "Path to file containing the Gemini API key. If not provided, "
+            "read from the GEMINI_API_KEY environment variable."
+        ),
     )
     pr_parser.add_argument(
         "--github-token",

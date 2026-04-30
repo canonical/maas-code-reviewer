@@ -65,8 +65,12 @@ uv run maas-code-reviewer
 
 ### Gemini API Key
 
-All review commands require a Gemini API key. Provide the path to a file
-containing the key with the `-g` / `--gemini-api-key-file` flag:
+All review commands require a Gemini API key. Provide it in one of two ways:
+
+| Method | Details |
+|---|---|
+| `-g`, `--gemini-api-key-file FILE` | Path to a file containing the key. |
+| `GEMINI_API_KEY` | Set this environment variable to the key. Overridden by `--gemini-api-key-file`. |
 
 ```sh
 maas-code-reviewer review-mp -g /path/to/gemini-api-key MP_URL
@@ -134,7 +138,7 @@ maas-code-reviewer review-mp [--launchpad-credentials FILE] -g KEY_FILE [--model
 | Argument | Description |
 |---|---|
 | `MP_URL` | URL of the merge proposal to review. |
-| `-g`, `--gemini-api-key-file` | **(required)** Path to file containing the Gemini API key. |
+| `-g`, `--gemini-api-key-file` | Path to file containing the Gemini API key. Falls back to `GEMINI_API_KEY` env var. |
 | `--model MODEL` | Gemini model to use (default: `gemini-3-flash-preview`). |
 | `--dry-run` | Print the review to stdout instead of posting it as a comment. |
 | `--metrics FILE` | Write review metrics as JSON to `FILE` (see [Review Metrics](#review-metrics)). |
@@ -168,7 +172,7 @@ maas-code-reviewer review-diff -g KEY_FILE [--model MODEL] [--repo-dir DIR] [--j
 | Argument | Description |
 |---|---|
 | `DIFF_FILE` | Path to a unified diff file, or `-` to read from stdin. |
-| `-g`, `--gemini-api-key-file` | **(required)** Path to file containing the Gemini API key. |
+| `-g`, `--gemini-api-key-file` | Path to file containing the Gemini API key. Falls back to `GEMINI_API_KEY` env var. |
 | `--model MODEL` | Gemini model to use (default: `gemini-3-flash-preview`). |
 | `--repo-dir DIR` | Path to the local git repository (default: current working directory). Used for `read_file` and `list_directory` tool calls. |
 | `--json-output FILE` | Write structured JSON review output to `FILE` instead of plain text to stdout. |
@@ -203,7 +207,7 @@ maas-code-reviewer review-pr -g KEY_FILE [--github-token TOKEN] [--model MODEL] 
 | Argument | Description |
 |---|---|
 | `PR_URL` | Full GitHub PR URL, e.g. `https://github.com/owner/repo/pull/42`. |
-| `-g`, `--gemini-api-key-file` | **(required)** Path to file containing the Gemini API key. |
+| `-g`, `--gemini-api-key-file` | Path to file containing the Gemini API key. Falls back to `GEMINI_API_KEY` env var. |
 | `--github-token TOKEN` | GitHub personal access token. Falls back to `GITHUB_TOKEN` env var. |
 | `--model MODEL` | Gemini model to use (default: `gemini-3-flash-preview`). |
 | `--repo-dir DIR` | Path to a local checkout of the repository (default: current working directory). Used for `read_file` and `list_directory` tool calls. The caller is responsible for having the repo checked out already. |
