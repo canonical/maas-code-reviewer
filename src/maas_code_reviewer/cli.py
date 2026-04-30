@@ -14,6 +14,7 @@ from maas_code_reviewer.git import GitClient
 from maas_code_reviewer.github_client import GitHubClient, parse_pr_url
 from maas_code_reviewer.launchpad_client import LaunchpadClient
 from maas_code_reviewer.llm_client import GeminiClient
+from maas_code_reviewer.metrics import ReviewMetrics, write_metrics
 from maas_code_reviewer.models import Comment, MergeProposal
 from maas_code_reviewer.repo_tools import RepoTools
 from maas_code_reviewer.reviewer import (
@@ -64,6 +65,7 @@ def review_merge_proposal(
     git: GitClient,
     llm: GeminiClient,
     mp_url: str,
+    metrics: ReviewMetrics | None = None,
 ) -> str | None:
     """Review a single merge proposal end to end.
 
@@ -95,7 +97,12 @@ def review_merge_proposal(
             description=description,
             read_file=tools.read_file,
             list_directory=tools.list_directory,
+            metrics=metrics,
         )
+
+        if metrics is not None:
+            metrics.files_read = tools.files_read_count
+            metrics.agents_md_read = tools.agents_md_read
 
     return review_comment
 
@@ -124,7 +131,12 @@ def handle_review_mp(args: argparse.Namespace) -> None:
     git_client = GitClient()
     api_key = Path(args.gemini_api_key_file).read_text().strip()
     llm_client = GeminiClient(api_key=api_key, model=args.model)
-    result = review_merge_proposal(lp_client, git_client, llm_client, args.mp_url)
+    metrics = ReviewMetrics()
+    result = review_merge_proposal(
+        lp_client, git_client, llm_client, args.mp_url, metrics=metrics
+    )
+    if args.metrics is not None and result is not None:
+        write_metrics(metrics, Path(args.metrics))
     if result is None:
         print("Already reviewed, skipping.")
     elif args.dry_run:
@@ -147,6 +159,7 @@ def handle_review_diff(args: argparse.Namespace) -> None:
     llm_client = GeminiClient(api_key=api_key, model=args.model)
 
     tools = RepoTools(repo_dir)
+    metrics = ReviewMetrics()
 
     if args.json_output:
         result_dict = review_diff_structured(
@@ -155,6 +168,7 @@ def handle_review_diff(args: argparse.Namespace) -> None:
             description=None,
             read_file=tools.read_file,
             list_directory=tools.list_directory,
+            metrics=metrics,
         )
         Path(args.json_output).write_text(json.dumps(result_dict, indent=2))
     else:
@@ -164,8 +178,14 @@ def handle_review_diff(args: argparse.Namespace) -> None:
             description=None,
             read_file=tools.read_file,
             list_directory=tools.list_directory,
+            metrics=metrics,
         )
         print(result)
+
+    metrics.files_read = tools.files_read_count
+    metrics.agents_md_read = tools.agents_md_read
+    if args.metrics is not None:
+        write_metrics(metrics, Path(args.metrics))
 
 
 def handle_review_pr(args: argparse.Namespace) -> None:
@@ -191,13 +211,20 @@ def handle_review_pr(args: argparse.Namespace) -> None:
     api_key = Path(args.gemini_api_key_file).read_text().strip()
     llm_client = GeminiClient(api_key=api_key, model=args.model)
 
+    metrics = ReviewMetrics()
     result_dict = review_diff_structured(
         llm_client,
         diff=diff,
         description=description,
         read_file=tools.read_file,
         list_directory=tools.list_directory,
+        metrics=metrics,
     )
+
+    metrics.files_read = tools.files_read_count
+    metrics.agents_md_read = tools.agents_md_read
+    if args.metrics is not None:
+        write_metrics(metrics, Path(args.metrics))
 
     if args.dry_run:
         print(json.dumps(result_dict, indent=2))
@@ -327,6 +354,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print review to stdout instead of posting as a comment.",
     )
     review_parser.add_argument(
+        "--metrics",
+        type=str,
+        default=None,
+        metavar="FILE",
+        help="Write review metrics (model, tokens, diff stats) as JSON to FILE.",
+    )
+    review_parser.add_argument(
         "mp_url",
         help="URL of the merge proposal to review.",
     )
@@ -367,6 +401,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "stdout. The JSON contains a 'general_comment' and 'inline_comments' "
             "keyed by file path and line number."
         ),
+    )
+    diff_parser.add_argument(
+        "--metrics",
+        type=str,
+        default=None,
+        metavar="FILE",
+        help="Write review metrics (model, tokens, diff stats) as JSON to FILE.",
     )
     diff_parser.add_argument(
         "diff_file",
@@ -413,6 +454,13 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Print the review JSON to stdout instead of posting it.",
+    )
+    pr_parser.add_argument(
+        "--metrics",
+        type=str,
+        default=None,
+        metavar="FILE",
+        help="Write review metrics (model, tokens, diff stats) as JSON to FILE.",
     )
     pr_parser.add_argument(
         "pr_url",

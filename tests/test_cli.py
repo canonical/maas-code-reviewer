@@ -25,6 +25,7 @@ from maas_code_reviewer.cli import (
     main,
     review_merge_proposal,
 )
+from maas_code_reviewer.metrics import ReviewMetrics
 from maas_code_reviewer.models import Comment
 from maas_code_reviewer.reviewer import REVIEW_PREAMBLE
 from tests.factory import make_mp
@@ -369,6 +370,36 @@ class TestBuildParser:
             ]
         )
         assert args.model == "gemini-2.5-pro"
+
+    def test_review_mp_metrics_defaults_to_none(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review-mp",
+                "-g",
+                str(key_file),
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.metrics is None
+
+    def test_review_mp_parses_metrics(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review-mp",
+                "-g",
+                str(key_file),
+                "--metrics",
+                "/tmp/m.json",
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.metrics == "/tmp/m.json"
 
 
 class TestMain:
@@ -1034,6 +1065,38 @@ class TestReviewMergeProposal:
         )
         assert result == expected
 
+    def test_populates_metrics(self, tmp_path: Path) -> None:
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="OK.", tokens_input=10, tokens_output=20, tokens_thinking=30
+                )
+            ]
+        )
+
+        metrics = ReviewMetrics()
+        result = review_merge_proposal(lp, git, llm, mp.url, metrics=metrics)
+
+        assert result is not None
+        assert metrics.model_name == "gemini-3-flash-preview"
+        assert metrics.tokens_input == 10
+        assert metrics.tokens_output == 20
+        assert metrics.tokens_thinking == 30
+        assert metrics.diff_lines > 0
+        assert metrics.diff_size_bytes > 0
+
 
 class TestBuildParserReviewDiff:
     def test_review_diff_parses_diff_file(self, tmp_path: Path) -> None:
@@ -1115,6 +1178,22 @@ class TestBuildParserReviewDiff:
             ]
         )
         assert args.json_output == str(output_file)
+
+    def test_review_diff_metrics_defaults_to_none(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(["review-diff", "-g", str(key_file), "-"])
+        assert args.metrics is None
+
+    def test_review_diff_parses_metrics(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            ["review-diff", "-g", str(key_file), "--metrics", "/tmp/m.json", "-"]
+        )
+        assert args.metrics == "/tmp/m.json"
 
 
 _STRUCTURED_DIFF = (
@@ -1702,6 +1781,25 @@ class TestBuildParserReviewPr:
         )
         assert args.dry_run is True
 
+    def test_review_pr_metrics_defaults_to_none(self) -> None:
+        args = _build_parser().parse_args(
+            ["review-pr", "-g", "key.txt", "https://github.com/owner/repo/pull/1"]
+        )
+        assert args.metrics is None
+
+    def test_review_pr_parses_metrics(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "--metrics",
+                "/tmp/m.json",
+                "https://github.com/owner/repo/pull/1",
+            ]
+        )
+        assert args.metrics == "/tmp/m.json"
+
 
 class TestHandleReviewPr:
     def _make_args(
@@ -1956,6 +2054,335 @@ class TestHandleReviewPr:
 
         tool_names = {t.__name__ for t in llm._client.received_tools[0]}
         assert "validate_review" in tool_names
+
+
+class TestHandleReviewDiffMetrics:
+    def test_no_metrics_flag_no_file_written(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text("--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n")
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        llm = FakeLLMClient([ScriptedResponse(text="All good.")])
+
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
+
+        # No metrics file should exist
+        assert not (tmp_path / "metrics.json").exists()
+
+    def test_metrics_written_with_correct_fields(self, tmp_path: Path) -> None:
+        diff_content = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text(diff_content)
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+        metrics_file = tmp_path / "metrics.json"
+
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="All good.",
+                    tokens_input=10,
+                    tokens_output=20,
+                    tokens_thinking=30,
+                )
+            ]
+        )
+
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(tmp_path),
+                    "--metrics",
+                    str(metrics_file),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
+
+        assert metrics_file.exists()
+        data = json.loads(metrics_file.read_text())
+        assert data["model_name"] == "gemini-3-flash-preview"
+        assert data["tokens_input"] == 10
+        assert data["tokens_output"] == 20
+        assert data["tokens_thinking"] == 30
+        assert data["diff_lines"] == diff_content.count("\n")
+        assert data["diff_size_bytes"] == len(diff_content.encode("utf-8"))
+        assert data["files_read"] == 0
+        assert data["agents_md_read"] is False
+
+    def test_metrics_tracks_files_read(self, tmp_path: Path) -> None:
+        repo_dir = tmp_path / "myrepo"
+        repo_dir.mkdir()
+        (repo_dir / "AGENTS.md").write_text("# Rules\nBe nice.\n")
+
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text("--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n")
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+        metrics_file = tmp_path / "metrics.json"
+
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="Used context.",
+                    tool_calls=[ToolCall(name="read_file", args={"path": "AGENTS.md"})],
+                )
+            ]
+        )
+
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
+            args = _build_parser().parse_args(
+                [
+                    "review-diff",
+                    "-g",
+                    str(api_key_file),
+                    "--repo-dir",
+                    str(repo_dir),
+                    "--metrics",
+                    str(metrics_file),
+                    str(diff_file),
+                ]
+            )
+            handle_review_diff(args)
+
+        data = json.loads(metrics_file.read_text())
+        assert data["files_read"] == 1
+        assert data["agents_md_read"] is True
+
+
+class TestHandleReviewPrMetrics:
+    def _make_args(
+        self,
+        tmp_path: Path,
+        *,
+        pr_url: str = "https://github.com/owner/repo/pull/42",
+        github_token: str | None = "ghp_test",
+        repo_dir: str | None = None,
+        dry_run: bool = False,
+        metrics: str | None = None,
+    ) -> argparse.Namespace:
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+        return _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                str(api_key_file),
+                *(["--github-token", github_token] if github_token else []),
+                *(["--repo-dir", repo_dir] if repo_dir else []),
+                *(["--dry-run"] if dry_run else []),
+                *(["--metrics", metrics] if metrics else []),
+                pr_url,
+            ]
+        )
+
+    def test_no_metrics_flag_no_file_written(self, tmp_path: Path) -> None:
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=_PR_DIFF)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        with (
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
+
+        assert not (tmp_path / "metrics.json").exists()
+
+    def test_metrics_written_with_correct_fields(self, tmp_path: Path) -> None:
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request(
+            "owner", "repo", 42, diff=_PR_DIFF, description="Add sys import"
+        )
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text=_PR_REVIEW_RESPONSE,
+                    tokens_input=100,
+                    tokens_output=200,
+                    tokens_thinking=300,
+                )
+            ]
+        )
+        metrics_file = tmp_path / "metrics.json"
+
+        with (
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(
+                self._make_args(
+                    tmp_path, repo_dir=str(tmp_path), metrics=str(metrics_file)
+                )
+            )
+
+        assert metrics_file.exists()
+        data = json.loads(metrics_file.read_text())
+        assert data["model_name"] == "gemini-3-flash-preview"
+        assert data["tokens_input"] == 100
+        assert data["tokens_output"] == 200
+        assert data["tokens_thinking"] == 300
+        assert data["diff_lines"] == _PR_DIFF.count("\n")
+        assert data["diff_size_bytes"] == len(_PR_DIFF.encode("utf-8"))
+        assert data["files_read"] == 0
+        assert data["agents_md_read"] is False
+
+
+class TestHandleReviewMpMetrics:
+    def test_metrics_written_with_correct_fields(self, tmp_path: Path) -> None:
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text="Looks great.",
+                    tokens_input=50,
+                    tokens_output=60,
+                    tokens_thinking=70,
+                )
+            ]
+        )
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+        metrics_file = tmp_path / "metrics.json"
+
+        with (
+            patch("maas_code_reviewer.cli.LaunchpadClient", return_value=lp),
+            patch("maas_code_reviewer.cli.GitClient", return_value=git),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+        ):
+            args = _build_parser().parse_args(
+                [
+                    "review-mp",
+                    "--dry-run",
+                    "--gemini-api-key-file",
+                    str(api_key_file),
+                    "--metrics",
+                    str(metrics_file),
+                    mp.url,
+                ]
+            )
+            handle_review_mp(args)
+
+        assert metrics_file.exists()
+        data = json.loads(metrics_file.read_text())
+        assert data["model_name"] == "gemini-3-flash-preview"
+        assert data["tokens_input"] == 50
+        assert data["tokens_output"] == 60
+        assert data["tokens_thinking"] == 70
+        assert data["diff_lines"] > 0
+        assert data["diff_size_bytes"] > 0
+
+    def test_no_metrics_flag_no_file_written(self, tmp_path: Path) -> None:
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+
+        llm = FakeLLMClient([ScriptedResponse(text="Looks great.")])
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+
+        with (
+            patch("maas_code_reviewer.cli.LaunchpadClient", return_value=lp),
+            patch("maas_code_reviewer.cli.GitClient", return_value=git),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+        ):
+            args = _build_parser().parse_args(
+                [
+                    "review-mp",
+                    "--dry-run",
+                    "--gemini-api-key-file",
+                    str(api_key_file),
+                    mp.url,
+                ]
+            )
+            handle_review_mp(args)
+
+        assert not (tmp_path / "metrics.json").exists()
+
+    def test_no_metrics_written_when_already_reviewed(self, tmp_path: Path) -> None:
+        git = FakeGitClient()
+        target_repo, source_repo = _setup_repos(tmp_path, git)
+
+        lp = FakeLaunchpadClient(bot_username="ci-bot")
+        mp = make_mp(
+            source_git_repository=str(source_repo),
+            source_git_path="refs/heads/feature",
+            target_git_repository=str(target_repo),
+            target_git_path="refs/heads/main",
+        )
+        lp.add_merge_proposal(mp)
+        lp.add_comment(
+            mp.api_url,
+            Comment(
+                author="ci-bot",
+                body="[maas-code-reviewer review]\n\nAlready done.",
+                date=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
+            ),
+        )
+
+        llm = FakeLLMClient()
+
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("fake-key\n")
+        metrics_file = tmp_path / "metrics.json"
+
+        with (
+            patch("maas_code_reviewer.cli.LaunchpadClient", return_value=lp),
+            patch("maas_code_reviewer.cli.GitClient", return_value=git),
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+        ):
+            args = _build_parser().parse_args(
+                [
+                    "review-mp",
+                    "--gemini-api-key-file",
+                    str(api_key_file),
+                    "--metrics",
+                    str(metrics_file),
+                    mp.url,
+                ]
+            )
+            handle_review_mp(args)
+
+        assert not metrics_file.exists()
 
 
 class TestMainReviewPr:

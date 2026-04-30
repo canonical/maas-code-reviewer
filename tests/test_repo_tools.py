@@ -117,3 +117,64 @@ class TestRepoTools:
         tools = RepoTools(link)
 
         assert tools.read_file("file.txt") == "content\n"
+
+
+class TestRepoToolsMetrics:
+    def test_files_read_count_starts_at_zero(self, tmp_path: Path) -> None:
+        tools = RepoTools(tmp_path)
+        assert tools.files_read_count == 0
+
+    def test_files_read_count_increments_on_successful_read(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a.txt").write_text("a")
+        (tmp_path / "b.txt").write_text("b")
+        tools = RepoTools(tmp_path)
+        tools.read_file("a.txt")
+        assert tools.files_read_count == 1
+        tools.read_file("b.txt")
+        assert tools.files_read_count == 2
+
+    def test_files_read_count_not_incremented_on_missing_file(
+        self, tmp_path: Path
+    ) -> None:
+        tools = RepoTools(tmp_path)
+        tools.read_file("missing.txt")
+        assert tools.files_read_count == 0
+
+    def test_files_read_count_not_incremented_on_path_traversal(
+        self, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        tools = RepoTools(repo)
+        tools.read_file("../secret.txt")
+        assert tools.files_read_count == 0
+
+    def test_agents_md_read_starts_false(self, tmp_path: Path) -> None:
+        tools = RepoTools(tmp_path)
+        assert tools.agents_md_read is False
+
+    def test_agents_md_read_becomes_true_when_agents_md_read(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "AGENTS.md").write_text("# Rules")
+        tools = RepoTools(tmp_path)
+        tools.read_file("AGENTS.md")
+        assert tools.agents_md_read is True
+
+    def test_agents_md_read_true_for_nested_agents_md(self, tmp_path: Path) -> None:
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "AGENTS.md").write_text("# Rules")
+        tools = RepoTools(tmp_path)
+        tools.read_file("subdir/AGENTS.md")
+        assert tools.agents_md_read is True
+
+    def test_agents_md_read_stays_false_for_non_agents_file(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "README.md").write_text("# Readme")
+        tools = RepoTools(tmp_path)
+        tools.read_file("README.md")
+        assert tools.agents_md_read is False
