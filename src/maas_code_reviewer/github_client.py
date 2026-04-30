@@ -1,7 +1,11 @@
 # Copyright 2026 Canonical Ltd.  This software is licensed under the
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
+from urllib import request
+
 import github
+
+GITHUB_API_VERSION = "2022-11-28"
 
 
 class GitHubClient:
@@ -14,13 +18,15 @@ class GitHubClient:
     """
 
     def __init__(self, token: str) -> None:
+        self._token = token
         self._gh = github.Github(token)
 
     def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         """Fetch the unified diff for a pull request.
 
-        Uses the raw GitHub API with ``Accept: application/vnd.github.diff``
-        to retrieve the diff as a string.
+        Uses the GitHub API endpoint for the pull request with
+        ``Accept: application/vnd.github.v3.diff`` to retrieve the unified
+        diff as text.
 
         Parameters
         ----------
@@ -36,18 +42,16 @@ class GitHubClient:
         str
             The unified diff text.
         """
-        gh_repo = self._gh.get_repo(f"{owner}/{repo}")
-        pr = gh_repo.get_pull(pr_number)
-        # Reconstruct a unified diff from the list of changed files.
-        parts: list[str] = []
-        for f in pr.get_files():
-            patch = f.patch
-            if patch is None:
-                continue
-            parts.append(f"--- a/{f.filename}")
-            parts.append(f"+++ b/{f.filename}")
-            parts.append(patch)
-        return "\n".join(parts)
+        req = request.Request(
+            url=f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}",
+            headers={
+                "Accept": "application/vnd.github.v3.diff",
+                "Authorization": f"Bearer {self._token}",
+                "X-GitHub-Api-Version": GITHUB_API_VERSION,
+            },
+        )
+        with request.urlopen(req, timeout=30) as response:
+            return response.read().decode("utf-8")
 
     def get_pr_description(self, owner: str, repo: str, pr_number: int) -> str | None:
         """Return the body text of a pull request, or ``None`` if empty.

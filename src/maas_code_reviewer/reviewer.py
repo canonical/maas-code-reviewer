@@ -81,6 +81,8 @@ TRUNCATION_NOTE = (
     "You are seeing a partial diff.]\n"
 )
 
+EMPTY_DIFF_GENERAL_COMMENT = "No changes to review: the provided diff is empty."
+
 
 def review_diff_structured(
     llm: GeminiClient,
@@ -119,6 +121,13 @@ def review_diff_structured(
     dict
         The parsed JSON review object.
     """
+    if _is_empty_diff(diff):
+        _populate_metrics_without_llm(metrics, llm.model, diff)
+        return {
+            "general_comment": EMPTY_DIFF_GENERAL_COMMENT,
+            "inline_comments": {},
+        }
+
     truncated_diff = _truncate_diff(diff, max_diff_chars)
     prompt = _build_structured_prompt(truncated_diff, description)
 
@@ -241,7 +250,13 @@ def _extract_json(text: str) -> str:
         # Remove the closing fence
         if stripped.endswith("```"):
             stripped = stripped[: stripped.rfind("```")]
-    return stripped.strip()
+    stripped = stripped.strip()
+
+    candidate = _extract_first_json_object(stripped)
+    if candidate is not None:
+        return candidate
+
+    return stripped
 
 
 def _build_prompt(diff: str, description: str | None) -> str:
@@ -260,6 +275,45 @@ def _build_prompt(diff: str, description: str | None) -> str:
     )
 
     return "".join(parts)
+
+
+def _extract_first_json_object(text: str) -> str | None:
+    """Return the first parsable JSON object substring from *text*.
+
+    Returns ``None`` if no JSON object can be decoded.
+    """
+    decoder = json.JSONDecoder()
+    offset = 0
+
+    while True:
+        start = text.find("{", offset)
+        if start == -1:
+            return None
+        try:
+            _, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            offset = start + 1
+            continue
+        return text[start:end]
+
+
+def _is_empty_diff(diff: str) -> bool:
+    """Return ``True`` when *diff* has no non-whitespace content."""
+    return diff.strip() == ""
+
+
+def _populate_metrics_without_llm(
+    metrics: ReviewMetrics | None, model_name: str, diff: str
+) -> None:
+    """Fill *metrics* for paths that skip the LLM call entirely."""
+    if metrics is None:
+        return
+    metrics.model_name = model_name
+    metrics.tokens_thinking = 0
+    metrics.tokens_input = 0
+    metrics.tokens_output = 0
+    metrics.diff_lines = len(diff.splitlines())
+    metrics.diff_size_bytes = len(diff.encode("utf-8"))
 
 
 def _populate_metrics(
