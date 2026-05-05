@@ -1535,7 +1535,9 @@ class TestHandleReviewDiffJsonOutput:
             handle_review_diff(args)
 
         data = json.loads(output_file.read_text())
-        assert data["general_comment"] == "Looks good."
+        assert data["general_comment"] == (
+            f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\nLooks good."
+        )
 
     def test_json_output_contains_inline_comments(self, tmp_path: Path) -> None:
         diff_file = tmp_path / "patch.diff"
@@ -1691,7 +1693,9 @@ class TestHandleReviewDiffJsonOutput:
 
         assert output_file.exists()
         data = json.loads(output_file.read_text())
-        assert data["general_comment"] == "No issues."
+        assert data["general_comment"] == (
+            f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\nNo issues."
+        )
 
     def test_missing_gemini_api_key_exits_with_error(
         self,
@@ -1951,7 +1955,9 @@ class TestHandleReviewPr:
 
         reviews = github_client.get_posted_reviews("owner", "repo", 42)
         assert len(reviews) == 1
-        assert reviews[0]["body"] == "Looks good overall."
+        assert reviews[0]["body"] == (
+            f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\nLooks good overall."
+        )
 
     def test_inline_comments_are_posted(self, tmp_path: Path) -> None:
         """Inline comments from the LLM response are included in the posted review."""
@@ -2005,7 +2011,9 @@ class TestHandleReviewPr:
 
         captured = capsys.readouterr()
         data = json.loads(captured.out)
-        assert data["general_comment"] == "Looks good overall."
+        assert data["general_comment"] == (
+            f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\nLooks good overall."
+        )
 
     def test_dry_run_does_not_post_review(self, tmp_path: Path) -> None:
         """With --dry-run, no review is posted to GitHub."""

@@ -480,7 +480,9 @@ class TestReviewDiffStructured:
             read_file=_make_read_file(),
             list_directory=_make_list_directory(),
         )
-        assert result["general_comment"] == "Looks good."
+        assert result["general_comment"] == (
+            f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\nLooks good."
+        )
 
     def test_returns_inline_comments(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
@@ -548,7 +550,9 @@ class TestReviewDiffStructured:
             read_file=_make_read_file(),
             list_directory=_make_list_directory(),
         )
-        assert result["general_comment"] == "Looks good."
+        assert result["general_comment"] == (
+            f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\nLooks good."
+        )
 
     def test_diff_truncated_when_exceeding_max(self) -> None:
         big_diff = "x" * 200
@@ -591,7 +595,9 @@ class TestReviewDiffStructured:
             read_file=_make_read_file(),
             list_directory=_make_list_directory(),
         )
-        assert result["general_comment"] == "Looks good."
+        assert result["general_comment"] == (
+            f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\nLooks good."
+        )
 
     def test_raises_on_invalid_json_response(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="this is not json at all")])
@@ -635,7 +641,9 @@ class TestReviewDiffStructured:
             read_file=rf,
             list_directory=_make_list_directory(),
         )
-        assert result["general_comment"] == "Looks good."
+        assert result["general_comment"] == (
+            f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\nLooks good."
+        )
 
 
 class TestReviewDiffMetrics:

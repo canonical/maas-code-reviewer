@@ -131,7 +131,11 @@ def review_diff_structured(
     _populate_metrics(metrics, llm, diff)
 
     cleaned = _extract_json(raw_text)
-    return json.loads(cleaned)
+    result = json.loads(cleaned)
+    result["general_comment"] = (
+        f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\n{result.get('general_comment', '')}"
+    )
+    return result
 
 
 def _validate_review(json_text: str, diff_text: str) -> str:
