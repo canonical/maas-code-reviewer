@@ -28,7 +28,7 @@ from maas_code_reviewer.cli import (
 )
 from maas_code_reviewer.metrics import ReviewMetrics
 from maas_code_reviewer.models import Comment
-from maas_code_reviewer.reviewer import REVIEW_PREAMBLE
+from maas_code_reviewer.reviewer import EMPTY_DIFF_GENERAL_COMMENT, REVIEW_PREAMBLE
 from tests.factory import make_mp
 from tests.fake_git import FakeGitClient
 from tests.fake_github import FakeGitHubClient
@@ -1992,6 +1992,24 @@ class TestHandleReviewPr:
 
         reviews = github_client.get_posted_reviews("owner", "repo", 42)
         assert reviews[0]["comments"] == []
+
+    def test_empty_diff_posts_default_no_changes_review(self, tmp_path: Path) -> None:
+        """When the PR diff is empty, post a deterministic no-changes review."""
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff="")
+        llm = FakeLLMClient()
+
+        with (
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
+
+        reviews = github_client.get_posted_reviews("owner", "repo", 42)
+        assert len(reviews) == 1
+        assert reviews[0]["body"] == EMPTY_DIFF_GENERAL_COMMENT
+        assert reviews[0]["comments"] == []
+        assert llm._client.received_prompts == []
 
     def test_dry_run_prints_json_to_stdout(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

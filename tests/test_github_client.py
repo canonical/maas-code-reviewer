@@ -1,11 +1,19 @@
 # Copyright 2026 Canonical Ltd.  This software is licensed under the
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
+from email.message import Message
+from urllib import request
+from urllib.error import HTTPError
+
 import pytest
 
-from maas_code_reviewer.github_client import GitHubClient, parse_pr_url
+from maas_code_reviewer.github_client import (
+    GITHUB_API_VERSION,
+    GitHubClient,
+    parse_pr_url,
+)
 from tests.fake_github import FakeGitHubClient
-from tests.fake_pygithub import FakeGithubFile, FakePyGithub
+from tests.fake_pygithub import FakePyGithub
 
 
 class TestParsePrUrl:
@@ -71,70 +79,96 @@ def _make_client(fake_gh: FakePyGithub, token: str = "test-token") -> GitHubClie
         return GitHubClient(token=token)
 
 
+class _FakeHttpResponse:
+    def __init__(self, body: str) -> None:
+        self._body = body.encode("utf-8")
+
+    def __enter__(self) -> "_FakeHttpResponse":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
 class TestGitHubClientGetPrDiff:
-    def test_returns_reconstructed_diff(self) -> None:
+    def test_fetches_diff_from_github_api(self) -> None:
         fake_gh = FakePyGithub()
-        fake_gh.add_pull(
-            "owner/repo",
-            1,
-            files=[
-                FakeGithubFile("src/foo.py", "@@ -1 +1,2 @@\n+import sys"),
-            ],
+        client = _make_client(fake_gh)
+
+        expected = "diff --git a/src/foo.py b/src/foo.py\n+import sys\n"
+        with pytest.MonkeyPatch.context() as m:
+            captured: list[request.Request] = []
+            captured_timeout: list[float | None] = []
+
+            def fake_urlopen(
+                req: request.Request, timeout: float | None = None
+            ) -> _FakeHttpResponse:
+                captured.append(req)
+                captured_timeout.append(timeout)
+                return _FakeHttpResponse(expected)
+
+            m.setattr("maas_code_reviewer.github_client.request.urlopen", fake_urlopen)
+            diff = client.get_pr_diff("owner", "repo", 1)
+
+        assert diff == expected
+        req = captured[0]
+        assert str(req.full_url) == "https://api.github.com/repos/owner/repo/pulls/1"
+        assert req.get_header("Accept") == "application/vnd.github.v3.diff"
+        assert req.get_header("Authorization") == "Bearer test-token"
+        assert dict(req.header_items())["X-github-api-version"] == GITHUB_API_VERSION
+        assert captured_timeout[0] == 30
+
+    def test_uses_owner_repo_and_pr_number_in_url(self) -> None:
+        fake_gh = FakePyGithub()
+        client = _make_client(fake_gh)
+
+        with pytest.MonkeyPatch.context() as m:
+            captured: list[request.Request] = []
+
+            def fake_urlopen(
+                req: request.Request, timeout: float | None = None
+            ) -> _FakeHttpResponse:
+                captured.append(req)
+                return _FakeHttpResponse("diff\n")
+
+            m.setattr("maas_code_reviewer.github_client.request.urlopen", fake_urlopen)
+            client.get_pr_diff("canonical", "maas-code-reviewer", 37)
+
+        req = captured[0]
+        assert (
+            str(req.full_url)
+            == "https://api.github.com/repos/canonical/maas-code-reviewer/pulls/37"
         )
-        client = _make_client(fake_gh)
 
-        diff = client.get_pr_diff("owner", "repo", 1)
-
-        assert "--- a/src/foo.py" in diff
-        assert "+++ b/src/foo.py" in diff
-        assert "@@ -1 +1,2 @@\n+import sys" in diff
-
-    def test_multiple_files(self) -> None:
+    def test_propagates_http_errors(self) -> None:
         fake_gh = FakePyGithub()
-        fake_gh.add_pull(
-            "owner/repo",
-            1,
-            files=[
-                FakeGithubFile("a.py", "@@ -1 +1 @@\n+a"),
-                FakeGithubFile("b.py", "@@ -1 +1 @@\n+b"),
-            ],
-        )
         client = _make_client(fake_gh)
 
-        diff = client.get_pr_diff("owner", "repo", 1)
+        with pytest.MonkeyPatch.context() as m:
+            def raise_http_error(
+                _req: request.Request, timeout: float | None = None
+            ) -> _FakeHttpResponse:
+                raise HTTPError(
+                    url="https://api.github.com/repos/owner/repo/pulls/1",
+                    code=403,
+                    msg="Forbidden",
+                    hdrs=Message(),
+                    fp=None,
+                )
 
-        assert "--- a/a.py" in diff
-        assert "--- a/b.py" in diff
+            m.setattr(
+                "maas_code_reviewer.github_client.request.urlopen",
+                raise_http_error,
+            )
 
-    def test_skips_files_with_no_patch(self) -> None:
-        fake_gh = FakePyGithub()
-        fake_gh.add_pull(
-            "owner/repo",
-            1,
-            files=[
-                FakeGithubFile("binary.png", None),
-                FakeGithubFile("text.py", "@@ -1 +1 @@\n+ok"),
-            ],
-        )
-        client = _make_client(fake_gh)
-
-        diff = client.get_pr_diff("owner", "repo", 1)
-
-        assert "binary.png" not in diff
-        assert "text.py" in diff
-
-    def test_no_files_returns_empty_string(self) -> None:
-        fake_gh = FakePyGithub()
-        fake_gh.add_pull("owner/repo", 1, files=[])
-        client = _make_client(fake_gh)
-
-        diff = client.get_pr_diff("owner", "repo", 1)
-
-        assert diff == ""
+            with pytest.raises(HTTPError):
+                client.get_pr_diff("owner", "repo", 1)
 
     def test_records_token(self) -> None:
         fake_gh = FakePyGithub()
-        fake_gh.add_pull("owner/repo", 1)
         _make_client(fake_gh, token="my-secret-token")
 
         assert fake_gh.token == "my-secret-token"

@@ -7,6 +7,7 @@ import pytest
 
 from maas_code_reviewer.metrics import ReviewMetrics
 from maas_code_reviewer.reviewer import (
+    EMPTY_DIFF_GENERAL_COMMENT,
     REVIEW_MARKER,
     REVIEW_PREAMBLE,
     STRUCTURED_SYSTEM_INSTRUCTION,
@@ -428,6 +429,14 @@ class TestExtractJson:
         result = _extract_json(text)
         assert result == '{"a": 1}'
 
+    def test_extracts_json_object_from_mixed_text(self) -> None:
+        text = 'Some preamble\n{"a": 1}\nSome trailing text'
+        assert _extract_json(text) == '{"a": 1}'
+
+    def test_skips_invalid_brace_prefix_and_extracts_valid_json(self) -> None:
+        text = "Not JSON {broken then valid {\"a\": 1}"
+        assert _extract_json(text) == '{"a": 1}'
+
 
 class TestBuildStructuredPrompt:
     def test_contains_structured_system_instruction(self) -> None:
@@ -505,6 +514,21 @@ class TestReviewDiffStructured:
             list_directory=_make_list_directory(),
         )
         assert result["inline_comments"] == {}
+
+    def test_empty_diff_skips_llm_and_returns_default_review(self) -> None:
+        llm = FakeLLMClient()
+        result = review_diff_structured(
+            llm,
+            diff="",
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        assert result == {
+            "general_comment": EMPTY_DIFF_GENERAL_COMMENT,
+            "inline_comments": {},
+        }
+        assert llm._client.received_prompts == []
 
     def test_read_file_tool_provided_to_llm(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
