@@ -47,4 +47,13 @@ jobs:
           maas-code-reviewer review-pr \
             --model "$MODEL" \
             --repo-dir "$GITHUB_WORKSPACE" \
+            --metrics "$RUNNER_TEMP/metrics.json" \
             "https://github.com/${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
+
+      - name: Upload metrics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: review-metrics-pr${{ github.event.pull_request.number }}
+          path: ${{ runner.temp }}/metrics.json
+          retention-days: 30
