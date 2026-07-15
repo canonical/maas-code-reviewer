@@ -28,6 +28,7 @@ parts:
     source: .
     build-snaps:
       - astral-uv
+    build-packages:
       - git
     stage-packages:
       - git
