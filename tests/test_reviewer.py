@@ -12,7 +12,9 @@ from maas_code_reviewer.reviewer import (
     REVIEW_PREAMBLE,
     STRUCTURED_SYSTEM_INSTRUCTION,
     SYSTEM_INSTRUCTION,
+    TRUNCATION_MANIFEST_HEADER,
     TRUNCATION_NOTE,
+    TRUNCATION_NOTE_MID_FILE,
     _build_prompt,
     _build_structured_prompt,
     _extract_json,
@@ -89,13 +91,230 @@ class TestTruncateDiff:
         diff = "a" * 100
         result = _truncate_diff(diff, 50)
         assert result.startswith("a" * 50)
-        assert TRUNCATION_NOTE in result
-        assert len(result) == 50 + len(TRUNCATION_NOTE)
+        assert TRUNCATION_NOTE_MID_FILE in result
+        assert len(result) == 50 + len(TRUNCATION_NOTE_MID_FILE)
 
     def test_truncation_note_appended(self) -> None:
         diff = "x" * 200
         result = _truncate_diff(diff, 10)
-        assert result.endswith(TRUNCATION_NOTE)
+        assert result.endswith(TRUNCATION_NOTE_MID_FILE)
+
+    def test_truncates_at_file_boundary_not_mid_hunk(self) -> None:
+        # A three-file diff where the limit falls between the second and third
+        # file headers: the visible portion includes the first two files
+        # completely, never splitting a hunk.
+        file_a = (
+            "diff --git a/file_a.txt b/file_a.txt\n"
+            "--- a/file_a.txt\n"
+            "+++ b/file_a.txt\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        file_b = (
+            "diff --git a/file_b.txt b/file_b.txt\n"
+            "--- a/file_b.txt\n"
+            "+++ b/file_b.txt\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        file_c = (
+            "diff --git a/file_c.txt b/file_c.txt\n"
+            "--- a/file_c.txt\n"
+            "+++ b/file_c.txt\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        diff = file_a + file_b + file_c
+        # Set the limit exactly at file_c's header offset so it is cut.
+        limit = len(file_a) + len(file_b)
+        result = _truncate_diff(diff, limit)
+        visible = result.split(TRUNCATION_NOTE)[0]
+        assert visible.startswith(file_a)
+        assert file_b in visible
+        assert "file_c.txt" not in visible
+
+    def test_omitted_files_listed_in_manifest(self) -> None:
+        # When truncation drops files, their paths appear in a manifest so
+        # the LLM knows what was cut off.
+        file_a = (
+            "diff --git a/keep.py b/keep.py\n"
+            "--- a/keep.py\n"
+            "+++ b/keep.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        file_b = (
+            "diff --git a/keep2.py b/keep2.py\n"
+            "--- a/keep2.py\n"
+            "+++ a/keep2.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        file_c = (
+            "diff --git a/omit.py b/omit.py\n"
+            "--- a/omit.py\n"
+            "+++ a/omit.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        diff = file_a + file_b + file_c
+        # Limit falls between file_b and file_c so file_c is omitted.
+        result = _truncate_diff(diff, len(file_a) + len(file_b))
+        assert TRUNCATION_NOTE in result
+        assert TRUNCATION_MANIFEST_HEADER in result
+        assert "- omit.py" in result
+        manifest_section = result.split(TRUNCATION_MANIFEST_HEADER)[1]
+        assert "keep.py" not in manifest_section
+        assert "keep2.py" not in manifest_section
+
+    def test_no_manifest_when_no_files_omitted(self) -> None:
+        # A plain string with no diff headers falls back to a character cut
+        # with no manifest.
+        result = _truncate_diff("a" * 100, 50)
+        assert TRUNCATION_NOTE_MID_FILE in result
+        assert TRUNCATION_MANIFEST_HEADER not in result
+
+    def test_first_file_header_beyond_limit_falls_back_to_char_cut(self) -> None:
+        # When the first file header starts at/after max_chars (e.g. there
+        # is preamble before the first header), the diff is cut at max_chars.
+        # The file is still listed in the manifest since its header is at/after
+        # the cut.
+        diff = (
+            "preamble before diff\n"
+            "diff --git a/file.py b/file.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        result = _truncate_diff(diff, 5)
+        assert result.startswith("pream")
+        assert TRUNCATION_NOTE_MID_FILE in result
+        assert TRUNCATION_MANIFEST_HEADER in result
+        assert "- file.py" in result
+
+    def test_omitted_header_without_trailing_newline(self) -> None:
+        # An omitted file header that is the last line (no trailing newline)
+        # is still parsed and listed in the manifest.
+        file_a = (
+            "diff --git a/keep.py b/keep.py\n"
+            "--- a/keep.py\n"
+            "+++ b/keep.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        # Second file header with no newline after it.
+        file_b = "diff --git a/no-newline.py b/no-newline.py"
+        diff = file_a + file_b
+        result = _truncate_diff(diff, len(file_a))
+        assert TRUNCATION_MANIFEST_HEADER in result
+        assert "- no-newline.py" in result
+
+    def test_omitted_header_without_b_prefix_falls_back_to_full_line(self) -> None:
+        # A malformed header without " b/" is listed verbatim in the manifest.
+        file_a = (
+            "diff --git a/keep.py b/keep.py\n"
+            "--- a/keep.py\n"
+            "+++ b/keep.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        # A malformed header: no " b/" path separator.
+        file_b = "diff --git a/weird-file\n"
+        diff = file_a + file_b
+        result = _truncate_diff(diff, len(file_a))
+        assert TRUNCATION_MANIFEST_HEADER in result
+
+    def test_single_large_file_falls_back_to_char_cut(self) -> None:
+        # A single file larger than max_chars must not be returned in full.
+        # It falls back to a character cut (no file-boundary split possible).
+        diff = "diff --git a/huge.py b/huge.py\n" + "+line\n" * 10_000
+        result = _truncate_diff(diff, 200)
+        visible = result.split(TRUNCATION_NOTE_MID_FILE)[0]
+        assert len(visible) <= 200
+        assert TRUNCATION_NOTE_MID_FILE in result
+        assert TRUNCATION_MANIFEST_HEADER not in result
+
+    def test_file_exceeding_limit_is_excluded_not_included(self) -> None:
+        # When a file's header starts within max_chars but its content
+        # extends past it, the file is excluded (not included in full)
+        # and listed in the manifest.
+        file_a = (
+            "diff --git a/small.py b/small.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-a\n"
+            "+b\n"
+        )
+        file_b = (
+            "diff --git a/large.py b/large.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+        )
+        diff = file_a + file_b
+        # Limit is just past file_b's header but file_b's content extends
+        # well beyond the limit.
+        limit = len(file_a) + len("diff --git a/large.py b/large.py\n") + 5
+        result = _truncate_diff(diff, limit)
+        visible = result.split(TRUNCATION_NOTE)[0]
+        assert "small.py" in visible
+        assert "large.py" not in visible
+        assert "- large.py" in result
+
+    def test_diff_git_marker_inside_content_not_treated_as_header(self) -> None:
+        # A "+diff --git ..." inside an added line must not be treated as a
+        # file boundary.
+        file_a = (
+            "diff --git a/a.py b/a.py\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " old\n"
+            "+diff --git a/fake.py b/fake.py\n"
+            "+more\n"
+        )
+        file_b = (
+            "diff --git a/b.py b/b.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        diff = file_a + file_b
+        result = _truncate_diff(diff, len(file_a))
+        visible = result.split(TRUNCATION_NOTE)[0]
+        assert "a.py" in visible
+        # The fake header inside file_a's content was NOT treated as a
+        # boundary, so file_a was not split — it is fully visible.
+        assert "fake.py" in visible
+        assert "b.py" not in visible
+        assert "- b.py" in result
+
+    def test_huge_file_followed_by_small_file_lists_small_in_manifest(
+        self,
+    ) -> None:
+        # When the first file exceeds max_chars (char-cut fallback), the
+        # subsequent small file must still appear in the manifest.
+        huge_file = (
+            "diff --git a/huge.py b/huge.py\n"
+            + "+line\n" * 10_000
+        )
+        small_file = (
+            "diff --git a/small.py b/small.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        diff = huge_file + small_file
+        result = _truncate_diff(diff, 200)
+        assert TRUNCATION_NOTE_MID_FILE in result
+        assert TRUNCATION_MANIFEST_HEADER in result
+        assert "- small.py" in result
 
 
 class TestReviewDiff:
@@ -172,7 +391,7 @@ class TestReviewDiff:
         assert "x" * 200 not in prompt
         # But the truncated portion and note should
         assert "x" * 50 in prompt
-        assert TRUNCATION_NOTE in prompt
+        assert TRUNCATION_NOTE_MID_FILE in prompt
 
     def test_diff_not_truncated_when_under_max(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
@@ -188,6 +407,7 @@ class TestReviewDiff:
         prompt = llm._client.received_prompts[0]
         assert "y" * 50 in prompt
         assert TRUNCATION_NOTE not in prompt
+        assert TRUNCATION_NOTE_MID_FILE not in prompt
 
     def test_tools_provided_to_llm(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
@@ -608,7 +828,7 @@ class TestReviewDiffStructured:
         assert isinstance(result, dict)
         prompt = llm._client.received_prompts[0]
         assert "x" * 200 not in prompt
-        assert TRUNCATION_NOTE in prompt
+        assert TRUNCATION_NOTE_MID_FILE in prompt
 
     def test_validate_review_tool_called_by_llm(self) -> None:
         """When the scripted LLM calls validate_review, no exception is raised."""

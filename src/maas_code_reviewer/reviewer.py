@@ -36,6 +36,13 @@ before raising them as issues — your training data may be out of date. When \
 you are about to flag something as invalid or unsupported, search first to \
 confirm rather than relying on memory alone.
 
+When the diff is truncated (a truncation note and a manifest of omitted files \
+will be present), you are only seeing part of the change. Before raising any \
+concern that could be resolved by inspecting the omitted files — for example, \
+whether a complementary change exists elsewhere — use the read_file tool to \
+read the relevant omitted file(s) first. Do not ask the author to verify \
+something you can check yourself by reading the file.
+
 You MUST produce your review as a JSON object matching this schema:
 
 {
@@ -82,13 +89,33 @@ before raising them as issues — your training data may be out of date. When \
 you are about to flag something as invalid or unsupported, search first to \
 confirm rather than relying on memory alone.
 
+When the diff is truncated (a truncation note and a manifest of omitted files \
+will be present), you are only seeing part of the change. Before raising any \
+concern that could be resolved by inspecting the omitted files — for example, \
+whether a complementary change exists elsewhere — use the read_file tool to \
+read the relevant omitted file(s) first. Do not ask the author to verify \
+something you can check yourself by reading the file.
+
 Keep your review concise and actionable. Do not repeat the diff back. \
 Focus on what matters.\
 """
 
 TRUNCATION_NOTE = (
     "\n\n[Note: The diff was truncated because it exceeded the maximum size. "
-    "You are seeing a partial diff.]\n"
+    "You are seeing only the first portion of the diff, ending at a complete "
+    "file boundary so no hunk is left partial.]\n"
+)
+
+TRUNCATION_NOTE_MID_FILE = (
+    "\n\n[Note: The diff was truncated because it exceeded the maximum size. "
+    "The cut fell inside a file, so the last visible file may be partial.]\n"
+)
+
+TRUNCATION_MANIFEST_HEADER = (
+    "\nThe following changed files were omitted from the truncated diff above. "
+    "They ARE part of this change — use the read_file tool to inspect any of "
+    "them before raising concerns that could be verified by reading the actual "
+    "file content:\n"
 )
 
 EMPTY_DIFF_GENERAL_COMMENT = "No changes to review: the provided diff is empty."
@@ -100,7 +127,7 @@ def review_diff_structured(
     description: str | None,
     read_file: Callable[[str], str],
     list_directory: Callable[[str], str],
-    max_diff_chars: int = 30_000,
+    max_diff_chars: int = 200_000,
     metrics: ReviewMetrics | None = None,
 ) -> dict:
     """Orchestrate a structured code review of *diff* using the given LLM.
@@ -183,7 +210,7 @@ def review_diff(
     description: str | None,
     read_file: Callable[[str], str],
     list_directory: Callable[[str], str],
-    max_diff_chars: int = 30_000,
+    max_diff_chars: int = 200_000,
     metrics: ReviewMetrics | None = None,
 ) -> str:
     """Orchestrate a code review of *diff* using the given LLM.
@@ -341,7 +368,80 @@ def _populate_metrics(
 
 
 def _truncate_diff(diff: str, max_chars: int) -> str:
-    """Truncate *diff* to *max_chars*, appending a note if truncated."""
+    """Truncate *diff* to around *max_chars*, at a file boundary.
+
+    The cut is made at the last ``diff --git`` header that fits entirely
+    before *max_chars*, so the LLM never sees a partial file/hunk.  A
+    manifest of the omitted changed files is appended, listing every file
+    that was cut off so the LLM can use ``read_file`` to inspect them.
+    """
     if len(diff) <= max_chars:
         return diff
-    return diff[:max_chars] + TRUNCATION_NOTE
+
+    # Indices (char offsets) of every "diff --git" header at the start of a
+    # line.  A naive find() would match the marker inside added/removed
+    # content lines (e.g. "+diff --git a/foo"), so we require the match to
+    # be at position 0 or immediately after a newline.
+    header_offsets: list[int] = []
+    search = 0
+    marker = "diff --git "
+    while True:
+        pos = diff.find(marker, search)
+        if pos == -1:
+            break
+        if pos == 0 or diff[pos - 1] == "\n":
+            header_offsets.append(pos)
+        search = pos + len(marker)
+
+    if not header_offsets:
+        # No file headers found — fall back to a plain character cut.
+        return diff[:max_chars] + TRUNCATION_NOTE_MID_FILE
+
+    # Find the last file whose content (header to next header, or end of
+    # diff) fits entirely within max_chars.  The visible portion includes
+    # every fitting file in full, so no hunk is ever split.
+    last_fitting_end = 0
+    for i, offset in enumerate(header_offsets):
+        file_end = (
+            header_offsets[i + 1] if i + 1 < len(header_offsets) else len(diff)
+        )
+        if file_end <= max_chars:
+            last_fitting_end = file_end
+        else:
+            break
+
+    if last_fitting_end > 0:
+        cut = last_fitting_end
+        note = TRUNCATION_NOTE
+    else:
+        # No file fits within max_chars (e.g. a single very large file) —
+        # fall back to a plain character cut, but still collect omitted
+        # files for the manifest.
+        cut = max_chars
+        note = TRUNCATION_NOTE_MID_FILE
+
+    visible = diff[:cut]
+
+    # Collect the paths of files that were omitted (headers at/after the cut).
+    omitted_paths: list[str] = []
+    for offset in header_offsets:
+        if offset < cut:
+            continue
+        line_end = diff.find("\n", offset)
+        if line_end == -1:
+            header_line = diff[offset:]
+        else:
+            header_line = diff[offset:line_end]
+        # "diff --git a/<path> b/<path>"
+        parts = header_line.split(" b/", 1)
+        if len(parts) == 2:
+            omitted_paths.append(parts[1])
+        else:
+            omitted_paths.append(header_line)
+
+    parts: list[str] = [visible, note]
+    if omitted_paths:
+        parts.append(TRUNCATION_MANIFEST_HEADER)
+        for path in omitted_paths:
+            parts.append(f"- {path}\n")
+    return "".join(parts)
