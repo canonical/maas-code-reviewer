@@ -66,6 +66,7 @@ def review_merge_proposal(
     git: GitClient,
     llm: GeminiClient,
     mp_url: str,
+    max_diff_chars: int = 200_000,
     metrics: ReviewMetrics | None = None,
 ) -> str | None:
     """Review a single merge proposal end to end.
@@ -98,6 +99,7 @@ def review_merge_proposal(
             description=description,
             read_file=tools.read_file,
             list_directory=tools.list_directory,
+            max_diff_chars=max_diff_chars,
             metrics=metrics,
         )
 
@@ -136,7 +138,12 @@ def handle_review_mp(args: argparse.Namespace) -> None:
     llm_client = GeminiClient(api_key=api_key, model=args.model)
     metrics = ReviewMetrics()
     result = review_merge_proposal(
-        lp_client, git_client, llm_client, args.mp_url, metrics=metrics
+        lp_client,
+        git_client,
+        llm_client,
+        args.mp_url,
+        max_diff_chars=args.max_diff_chars,
+        metrics=metrics,
     )
     if args.metrics is not None and result is not None:
         write_metrics(metrics, Path(args.metrics))
@@ -174,6 +181,7 @@ def handle_review_diff(args: argparse.Namespace) -> None:
             description=None,
             read_file=tools.read_file,
             list_directory=tools.list_directory,
+            max_diff_chars=args.max_diff_chars,
             metrics=metrics,
         )
         Path(args.json_output).write_text(json.dumps(result_dict, indent=2))
@@ -184,6 +192,7 @@ def handle_review_diff(args: argparse.Namespace) -> None:
             description=None,
             read_file=tools.read_file,
             list_directory=tools.list_directory,
+            max_diff_chars=args.max_diff_chars,
             metrics=metrics,
         )
         print(result)
@@ -227,6 +236,7 @@ def handle_review_pr(args: argparse.Namespace) -> None:
         description=description,
         read_file=tools.read_file,
         list_directory=tools.list_directory,
+        max_diff_chars=args.max_diff_chars,
         metrics=metrics,
     )
 
@@ -383,6 +393,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Gemini model to use (default: 'gemini-3-flash-preview').",
     )
     review_parser.add_argument(
+        "--max-diff-chars",
+        type=int,
+        default=200_000,
+        metavar="N",
+        help=(
+            "Maximum diff size in characters before truncation "
+            "(default: 200000)."
+        ),
+    )
+    review_parser.add_argument(
         "--dry-run",
         action="store_true",
         default=False,
@@ -419,6 +439,16 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default="gemini-3-flash-preview",
         help="Gemini model to use (default: 'gemini-3-flash-preview').",
+    )
+    diff_parser.add_argument(
+        "--max-diff-chars",
+        type=int,
+        default=200_000,
+        metavar="N",
+        help=(
+            "Maximum diff size in characters before truncation "
+            "(default: 200000)."
+        ),
     )
     diff_parser.add_argument(
         "--repo-dir",
@@ -480,6 +510,16 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default="gemini-3-flash-preview",
         help="Gemini model to use (default: 'gemini-3-flash-preview').",
+    )
+    pr_parser.add_argument(
+        "--max-diff-chars",
+        type=int,
+        default=200_000,
+        metavar="N",
+        help=(
+            "Maximum diff size in characters before truncation "
+            "(default: 200000)."
+        ),
     )
     pr_parser.add_argument(
         "--repo-dir",

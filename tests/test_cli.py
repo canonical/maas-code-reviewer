@@ -402,6 +402,38 @@ class TestBuildParser:
         )
         assert args.metrics == "/tmp/m.json"
 
+    def test_review_mp_max_diff_chars_defaults_to_200000(
+        self, tmp_path: Path
+    ) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review-mp",
+                "-g",
+                str(key_file),
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.max_diff_chars == 200_000
+
+    def test_review_mp_parses_max_diff_chars(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review-mp",
+                "-g",
+                str(key_file),
+                "--max-diff-chars",
+                "50000",
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.max_diff_chars == 50_000
+
 
 class TestMain:
     def test_no_command_exits_with_code_1(self) -> None:
@@ -1283,6 +1315,31 @@ class TestBuildParserReviewDiff:
         )
         assert args.metrics == "/tmp/m.json"
 
+    def test_review_diff_max_diff_chars_defaults_to_200000(
+        self, tmp_path: Path
+    ) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(["review-diff", "-g", str(key_file), "-"])
+        assert args.max_diff_chars == 200_000
+
+    def test_review_diff_parses_max_diff_chars(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review-diff",
+                "-g",
+                str(key_file),
+                "--max-diff-chars",
+                "100000",
+                "-",
+            ]
+        )
+        assert args.max_diff_chars == 100_000
+
 
 _STRUCTURED_DIFF = (
     "--- a/src/foo.py\n"
@@ -1912,6 +1969,25 @@ class TestBuildParserReviewPr:
         )
         assert args.metrics == "/tmp/m.json"
 
+    def test_review_pr_max_diff_chars_defaults_to_200000(self) -> None:
+        args = _build_parser().parse_args(
+            ["review-pr", "-g", "key.txt", "https://github.com/owner/repo/pull/1"]
+        )
+        assert args.max_diff_chars == 200_000
+
+    def test_review_pr_parses_max_diff_chars(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "--max-diff-chars",
+                "300000",
+                "https://github.com/owner/repo/pull/1",
+            ]
+        )
+        assert args.max_diff_chars == 300_000
+
 
 class TestHandleReviewPr:
     def _make_args(
@@ -1923,6 +1999,7 @@ class TestHandleReviewPr:
         gemini_api_key_file: str | None = "__default__",
         repo_dir: str | None = None,
         dry_run: bool = False,
+        max_diff_chars: int | None = None,
     ) -> argparse.Namespace:
         if gemini_api_key_file == "__default__":
             api_key_file = tmp_path / "api_key.txt"
@@ -1935,6 +2012,11 @@ class TestHandleReviewPr:
                 *(["--github-token", github_token] if github_token else []),
                 *(["--repo-dir", repo_dir] if repo_dir else []),
                 *(["--dry-run"] if dry_run else []),
+                *(
+                    ["--max-diff-chars", str(max_diff_chars)]
+                    if max_diff_chars is not None
+                    else []
+                ),
                 pr_url,
             ]
         )
@@ -2204,6 +2286,38 @@ class TestHandleReviewPr:
 
         prompt = llm._client.received_prompts[0]
         assert "import sys" in prompt
+
+    def test_max_diff_chars_truncates_diff_sent_to_llm(
+        self, tmp_path: Path
+    ) -> None:
+        """A low --max-diff-chars truncates the diff before it reaches the LLM."""
+        truncated_diff = (
+            "diff --git a/src/foo.py b/src/foo.py\n"
+            "--- a/src/foo.py\n"
+            "+++ b/src/foo.py\n"
+            "@@ -1,3 +1,4 @@\n"
+            " import os\n"
+            "+import sys\n"
+            "\n"
+            " def main():\n"
+        )
+        github_client = FakeGitHubClient()
+        github_client.add_pull_request("owner", "repo", 42, diff=truncated_diff)
+        llm = FakeLLMClient([ScriptedResponse(text=_PR_EMPTY_RESPONSE)])
+
+        with (
+            patch("maas_code_reviewer.cli.GeminiClient", return_value=llm),
+            patch("maas_code_reviewer.cli.GitHubClient", return_value=github_client),
+        ):
+            handle_review_pr(
+                self._make_args(
+                    tmp_path, repo_dir=str(tmp_path), max_diff_chars=10
+                )
+            )
+
+        prompt = llm._client.received_prompts[0]
+        assert "import sys" not in prompt
+        assert "truncated" in prompt.lower()
 
     def test_default_repo_dir_is_cwd(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
