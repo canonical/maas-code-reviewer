@@ -3,7 +3,7 @@
 
 import sys
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
 from google import genai
 from google.genai import types
@@ -50,10 +50,15 @@ class GeminiClient:
         return self._last_tokens_thinking
 
     def review(self, prompt: str, tools: list[Callable[..., Any]]) -> str:
+        tool_entries: list[types.Tool | Callable[..., Any]] = [
+            *tools,
+            types.Tool(google_search=types.GoogleSearch()),
+        ]
         config = types.GenerateContentConfig(
             thinking_config=types.ThinkingConfig(include_thoughts=True),
-            tools=cast(
-                list[types.Tool | Callable[..., Any]] | None, tools if tools else None
+            tools=tool_entries,
+            tool_config=types.ToolConfig(
+                include_server_side_tool_invocations=True
             ),
         )
 

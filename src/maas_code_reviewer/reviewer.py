@@ -29,7 +29,12 @@ possible.
 You are provided with the diff of the proposed changes. If you need more \
 context (e.g. to understand how a changed function is used elsewhere, or to \
 read project conventions from an AGENTS.md file), use the provided tools \
-to read files or list directory contents in the merged working tree.
+to read files or list directory contents in the merged working tree. \
+You also have access to a Google Search tool. Use it to verify factual \
+claims about external libraries, APIs, frameworks, or configuration syntax \
+before raising them as issues — your training data may be out of date. When \
+you are about to flag something as invalid or unsupported, search first to \
+confirm rather than relying on memory alone.
 
 You MUST produce your review as a JSON object matching this schema:
 
@@ -70,7 +75,12 @@ possible.
 You are provided with the diff of the proposed changes. If you need more \
 context (e.g. to understand how a changed function is used elsewhere, or to \
 read project conventions from an AGENTS.md file), use the provided tools \
-to read files or list directory contents in the merged working tree.
+to read files or list directory contents in the merged working tree. \
+You also have access to a Google Search tool. Use it to verify factual \
+claims about external libraries, APIs, frameworks, or configuration syntax \
+before raising them as issues — your training data may be out of date. When \
+you are about to flag something as invalid or unsupported, search first to \
+confirm rather than relying on memory alone.
 
 Keep your review concise and actionable. Do not repeat the diff back. \
 Focus on what matters.\

@@ -110,3 +110,13 @@ class TestTokenCountProperties:
     def test_model_property_returns_model_name(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
         assert llm.model == "gemini-3-flash-preview"
+
+
+class TestGoogleSearch:
+    def test_google_search_tool_always_present(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        llm.review("prompt", [])
+        raw_tools = llm._client.received_raw_tools[0]
+        assert any(
+            getattr(tool, "google_search", None) is not None for tool in raw_tools
+        )

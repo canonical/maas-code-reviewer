@@ -343,6 +343,20 @@ class TestReviewDiff:
         assert "No changes." in result
         assert result.startswith(REVIEW_MARKER)
 
+    def test_google_search_tool_present(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        review_diff(
+            llm,
+            diff="d",
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        raw_tools = llm._client.received_raw_tools[0]
+        assert any(
+            getattr(tool, "google_search", None) is not None for tool in raw_tools
+        )
+
 
 # ---------------------------------------------------------------------------
 # Helpers shared by structured-review tests
@@ -667,6 +681,20 @@ class TestReviewDiffStructured:
         )
         assert result["general_comment"] == (
             f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\nLooks good."
+        )
+
+    def test_google_search_tool_present(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
+        review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        raw_tools = llm._client.received_raw_tools[0]
+        assert any(
+            getattr(tool, "google_search", None) is not None for tool in raw_tools
         )
 
 

@@ -3,6 +3,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from google.genai import types
 
@@ -42,6 +43,7 @@ class FakeGenaiClient:
     def __init__(self, responses: list[ScriptedResponse] | None = None) -> None:
         self.received_prompts: list[str] = []
         self.received_tools: list[list[Callable[..., str]]] = []
+        self.received_raw_tools: list[list[Any]] = []
         self.chats = _FakeChats(list(responses) if responses else [], self)
 
 
@@ -80,15 +82,18 @@ class _FakeChat:
     ) -> None:
         self._responses = responses
         self._owner = owner
+        self._all_tools: list[Any] = (
+            list(config.tools) if config and config.tools else []
+        )
         self._tools_by_name: dict[str, Callable[..., str]] = {}
-        if config and config.tools:
-            for tool in config.tools:
-                if callable(tool):
-                    self._tools_by_name[tool.__name__] = tool
+        for tool in self._all_tools:
+            if callable(tool):
+                self._tools_by_name[tool.__name__] = tool
 
     def send_message(self, message: str) -> types.GenerateContentResponse:
         self._owner.received_prompts.append(message)
         self._owner.received_tools.append(list(self._tools_by_name.values()))
+        self._owner.received_raw_tools.append(list(self._all_tools))
 
         if not self._responses:
             raise RuntimeError("FakeGenaiClient: no more scripted responses")
