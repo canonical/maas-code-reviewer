@@ -14,17 +14,24 @@ from typing import NoReturn
 from maas_code_reviewer.git import GitClient
 from maas_code_reviewer.github_client import GitHubClient, parse_pr_url
 from maas_code_reviewer.launchpad_client import LaunchpadClient
-from maas_code_reviewer.llm_client import GeminiClient
+from maas_code_reviewer.llm_client import DEFAULT_MAX_TOOL_CALLS, GeminiClient
 from maas_code_reviewer.metrics import ReviewMetrics, write_metrics
 from maas_code_reviewer.models import Comment, MergeProposal
 from maas_code_reviewer.repo_tools import RepoTools
 from maas_code_reviewer.reviewer import (
     REVIEW_MARKER,
+    NoReviewText,
     review_diff,
     review_diff_structured,
 )
 
 _LP_GIT_BASE = "https://git.launchpad.net/"
+_MAX_TOOL_CALLS_HELP = (
+    "Maximum number of automatic tool calls the LLM may make during a "
+    "review (file reads, directory listings, searches). When the limit is "
+    "reached the reviewer resumes the chat to elicit a text answer. "
+    f"(default: {DEFAULT_MAX_TOOL_CALLS})."
+)
 
 
 @dataclass(frozen=True)
@@ -68,6 +75,7 @@ def review_merge_proposal(
     mp_url: str,
     max_diff_chars: int = 200_000,
     metrics: ReviewMetrics | None = None,
+    max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
 ) -> str | None:
     """Review a single merge proposal end to end.
 
@@ -101,6 +109,7 @@ def review_merge_proposal(
             list_directory=tools.list_directory,
             max_diff_chars=max_diff_chars,
             metrics=metrics,
+            max_tool_calls=max_tool_calls,
         )
 
         if metrics is not None:
@@ -144,6 +153,7 @@ def handle_review_mp(args: argparse.Namespace) -> None:
         args.mp_url,
         max_diff_chars=args.max_diff_chars,
         metrics=metrics,
+        max_tool_calls=args.max_tool_calls,
     )
     if args.metrics is not None and result is not None:
         write_metrics(metrics, Path(args.metrics))
@@ -183,6 +193,7 @@ def handle_review_diff(args: argparse.Namespace) -> None:
             list_directory=tools.list_directory,
             max_diff_chars=args.max_diff_chars,
             metrics=metrics,
+            max_tool_calls=args.max_tool_calls,
         )
         Path(args.json_output).write_text(json.dumps(result_dict, indent=2))
     else:
@@ -194,6 +205,7 @@ def handle_review_diff(args: argparse.Namespace) -> None:
             list_directory=tools.list_directory,
             max_diff_chars=args.max_diff_chars,
             metrics=metrics,
+            max_tool_calls=args.max_tool_calls,
         )
         print(result)
 
@@ -238,6 +250,7 @@ def handle_review_pr(args: argparse.Namespace) -> None:
         list_directory=tools.list_directory,
         max_diff_chars=args.max_diff_chars,
         metrics=metrics,
+        max_tool_calls=args.max_tool_calls,
     )
 
     metrics.files_read = tools.files_read_count
@@ -270,15 +283,18 @@ def main(argv: list[str] | None = None) -> None:
     if args.command is None:
         parser.print_help()
         sys.exit(1)
-
-    if args.command == "list-lp-mps":
-        handle_list_lp_mps(args)
-    elif args.command == "review-mp":
-        handle_review_mp(args)
-    elif args.command == "review-diff":
-        handle_review_diff(args)
-    elif args.command == "review-pr":
-        handle_review_pr(args)
+    try:
+        if args.command == "list-lp-mps":
+            handle_list_lp_mps(args)
+        elif args.command == "review-mp":
+            handle_review_mp(args)
+        elif args.command == "review-diff":
+            handle_review_diff(args)
+        elif args.command == "review-pr":
+            handle_review_pr(args)
+    except NoReviewText as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _get_gemini_api_key(args: argparse.Namespace) -> str | None:
@@ -403,6 +419,13 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     review_parser.add_argument(
+        "--max-tool-calls",
+        type=int,
+        default=DEFAULT_MAX_TOOL_CALLS,
+        metavar="N",
+        help=_MAX_TOOL_CALLS_HELP,
+    )
+    review_parser.add_argument(
         "--dry-run",
         action="store_true",
         default=False,
@@ -449,6 +472,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "Maximum diff size in characters before truncation "
             "(default: 200000)."
         ),
+    )
+    diff_parser.add_argument(
+        "--max-tool-calls",
+        type=int,
+        default=DEFAULT_MAX_TOOL_CALLS,
+        metavar="N",
+        help=_MAX_TOOL_CALLS_HELP,
     )
     diff_parser.add_argument(
         "--repo-dir",
@@ -520,6 +550,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "Maximum diff size in characters before truncation "
             "(default: 200000)."
         ),
+    )
+    pr_parser.add_argument(
+        "--max-tool-calls",
+        type=int,
+        default=DEFAULT_MAX_TOOL_CALLS,
+        metavar="N",
+        help=_MAX_TOOL_CALLS_HELP,
     )
     pr_parser.add_argument(
         "--repo-dir",

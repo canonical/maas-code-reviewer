@@ -15,6 +15,7 @@ from maas_code_reviewer.reviewer import (
     TRUNCATION_MANIFEST_HEADER,
     TRUNCATION_NOTE,
     TRUNCATION_NOTE_MID_FILE,
+    NoReviewText,
     _build_prompt,
     _build_structured_prompt,
     _extract_json,
@@ -551,8 +552,8 @@ class TestReviewDiff:
         )
         assert "Dir was missing." in result
 
-    def test_empty_diff(self) -> None:
-        llm = FakeLLMClient([ScriptedResponse(text="No changes.")])
+    def test_empty_diff_skips_llm_and_returns_default_review(self) -> None:
+        llm = FakeLLMClient()
         result = review_diff(
             llm,
             diff="",
@@ -560,8 +561,26 @@ class TestReviewDiff:
             read_file=_make_read_file(),
             list_directory=_make_list_directory(),
         )
-        assert "No changes." in result
+        assert EMPTY_DIFF_GENERAL_COMMENT in result
         assert result.startswith(REVIEW_MARKER)
+        assert llm._client.received_prompts == []
+
+    def test_raises_no_review_text_when_llm_returns_empty(self) -> None:
+        no_text = ScriptedResponse(
+            text=None,
+            pending_function_call=ToolCall(
+                name="list_directory", args={"path": "src"}
+            ),
+        )
+        llm = FakeLLMClient([no_text, no_text, no_text, no_text])
+        with pytest.raises(NoReviewText, match="no review text"):
+            review_diff(
+                llm,
+                diff="d",
+                description=None,
+                read_file=_make_read_file(),
+                list_directory=_make_list_directory(),
+            )
 
     def test_google_search_tool_present(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
@@ -917,6 +936,52 @@ class TestReviewDiffStructured:
             getattr(tool, "google_search", None) is not None for tool in raw_tools
         )
 
+    def test_resumes_when_llm_ends_on_function_call(self) -> None:
+        # Reproduces issue #57: the model ends its turn on a function_call
+        # (no text) after exhausting its tool-call budget. review() resumes
+        # and the second turn yields the JSON review.
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text=None,
+                    pending_function_call=ToolCall(
+                        name="list_directory", args={"path": "src"}
+                    ),
+                ),
+                ScriptedResponse(text=_VALID_JSON_RESPONSE),
+            ]
+        )
+        result = review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        assert result["general_comment"] == (
+            f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\nLooks good."
+        )
+
+    def test_raises_clear_error_when_llm_never_returns_text(self) -> None:
+        # When the model never produces text (even after resume attempts),
+        # a NoReviewText exception is raised instead of a cryptic
+        # JSONDecodeError.
+        no_text = ScriptedResponse(
+            text=None,
+            pending_function_call=ToolCall(
+                name="list_directory", args={"path": "src"}
+            ),
+        )
+        llm = FakeLLMClient([no_text, no_text, no_text, no_text])
+        with pytest.raises(NoReviewText, match="no review text"):
+            review_diff_structured(
+                llm,
+                diff=_SIMPLE_DIFF,
+                description=None,
+                read_file=_make_read_file(),
+                list_directory=_make_list_directory(),
+            )
+
 
 class TestReviewDiffMetrics:
     def test_review_diff_populates_metrics(self) -> None:
@@ -987,3 +1052,69 @@ class TestReviewDiffMetrics:
             list_directory=_make_list_directory(),
         )
         # No error — backwards compatible
+
+    def test_review_diff_populates_tool_call_metrics(self) -> None:
+        from maas_code_reviewer.llm_client import DEFAULT_MAX_TOOL_CALLS
+
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        metrics = ReviewMetrics()
+        review_diff(
+            llm,
+            diff="some diff",
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+            metrics=metrics,
+        )
+        assert metrics.tool_call_limit == DEFAULT_MAX_TOOL_CALLS
+        assert metrics.tool_call_limit_reached is False
+        assert metrics.resume_attempts == 0
+
+    def test_review_diff_custom_max_tool_calls_in_metrics(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        metrics = ReviewMetrics()
+        review_diff(
+            llm,
+            diff="some diff",
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+            metrics=metrics,
+            max_tool_calls=42,
+        )
+        assert metrics.tool_call_limit == 42
+
+    def test_review_diff_records_limit_reached_in_metrics(self) -> None:
+        no_text = ScriptedResponse(
+            text=None,
+            pending_function_call=ToolCall(
+                name="list_directory", args={"path": "src"}
+            ),
+        )
+        llm = FakeLLMClient([no_text, ScriptedResponse(text="ok")])
+        metrics = ReviewMetrics()
+        review_diff(
+            llm,
+            diff="some diff",
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+            metrics=metrics,
+        )
+        assert metrics.tool_call_limit_reached is True
+        assert metrics.resume_attempts == 1
+
+    def test_empty_diff_metrics_have_zero_tool_call_fields(self) -> None:
+        llm = FakeLLMClient()
+        metrics = ReviewMetrics()
+        review_diff_structured(
+            llm,
+            diff="",
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+            metrics=metrics,
+        )
+        assert metrics.tool_call_limit == 0
+        assert metrics.tool_call_limit_reached is False
+        assert metrics.resume_attempts == 0
