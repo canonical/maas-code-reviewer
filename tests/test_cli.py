@@ -26,6 +26,7 @@ from maas_code_reviewer.cli import (
     main,
     review_merge_proposal,
 )
+from maas_code_reviewer.llm_client import DEFAULT_MAX_TOOL_CALLS
 from maas_code_reviewer.metrics import ReviewMetrics
 from maas_code_reviewer.models import Comment
 from maas_code_reviewer.reviewer import EMPTY_DIFF_GENERAL_COMMENT, REVIEW_PREAMBLE
@@ -434,12 +435,72 @@ class TestBuildParser:
         )
         assert args.max_diff_chars == 50_000
 
+    def test_review_mp_max_tool_calls_defaults(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review-mp",
+                "-g",
+                str(key_file),
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.max_tool_calls == DEFAULT_MAX_TOOL_CALLS
+
+    def test_review_mp_parses_max_tool_calls(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review-mp",
+                "-g",
+                str(key_file),
+                "--max-tool-calls",
+                "50",
+                "https://code.launchpad.net/~user/project/+git/repo/+merge/1",
+            ]
+        )
+        assert args.max_tool_calls == 50
+
 
 class TestMain:
     def test_no_command_exits_with_code_1(self) -> None:
         with pytest.raises(SystemExit) as exc_info:
             main([])
         assert exc_info.value.code == 1
+
+    def test_no_review_text_exits_with_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        diff_file = tmp_path / "patch.diff"
+        diff_file.write_text("--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n")
+        api_key_file = tmp_path / "key"
+        api_key_file.write_text("fake-key")
+
+        no_text = ScriptedResponse(
+            text=None,
+            pending_function_call=ToolCall(
+                name="list_directory", args={"path": "src"}
+            ),
+        )
+        llm = FakeLLMClient([no_text, no_text, no_text, no_text])
+
+        with patch("maas_code_reviewer.cli.GeminiClient", return_value=llm):
+            with pytest.raises(SystemExit) as exc_info:
+                main(
+                    [
+                        "review-diff",
+                        "-g",
+                        str(api_key_file),
+                        str(diff_file),
+                    ]
+                )
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "no review text" in captured.err
 
     def test_list_lp_mps_delegates_to_handle_list_lp_mps(
         self, capsys: pytest.CaptureFixture[str]
@@ -1340,6 +1401,29 @@ class TestBuildParserReviewDiff:
         )
         assert args.max_diff_chars == 100_000
 
+    def test_review_diff_max_tool_calls_defaults(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(["review-diff", "-g", str(key_file), "-"])
+        assert args.max_tool_calls == DEFAULT_MAX_TOOL_CALLS
+
+    def test_review_diff_parses_max_tool_calls(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "key"
+        key_file.write_text("test-key")
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "review-diff",
+                "-g",
+                str(key_file),
+                "--max-tool-calls",
+                "15",
+                "-",
+            ]
+        )
+        assert args.max_tool_calls == 15
+
 
 _STRUCTURED_DIFF = (
     "--- a/src/foo.py\n"
@@ -1987,6 +2071,25 @@ class TestBuildParserReviewPr:
             ]
         )
         assert args.max_diff_chars == 300_000
+
+    def test_review_pr_max_tool_calls_defaults(self) -> None:
+        args = _build_parser().parse_args(
+            ["review-pr", "-g", "key.txt", "https://github.com/owner/repo/pull/1"]
+        )
+        assert args.max_tool_calls == DEFAULT_MAX_TOOL_CALLS
+
+    def test_review_pr_parses_max_tool_calls(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "review-pr",
+                "-g",
+                "key.txt",
+                "--max-tool-calls",
+                "60",
+                "https://github.com/owner/repo/pull/1",
+            ]
+        )
+        assert args.max_tool_calls == 60
 
 
 class TestHandleReviewPr:

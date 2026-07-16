@@ -5,7 +5,7 @@ import json
 import sys
 from collections.abc import Callable
 
-from maas_code_reviewer.llm_client import GeminiClient
+from maas_code_reviewer.llm_client import DEFAULT_MAX_TOOL_CALLS, GeminiClient
 from maas_code_reviewer.metrics import ReviewMetrics
 from maas_code_reviewer.review_schema import validate_review_json
 
@@ -16,6 +16,15 @@ REVIEW_PREAMBLE = """\
 > Intended to assist a human reviewer, not replace one — suggestions may be
 > incorrect, please verify before acting.
 """
+
+
+class NoReviewText(Exception):
+    """Raised when the LLM ends its turn without producing any review text.
+
+    This typically happens when automatic function calling stops on a
+    further tool call (the tool-call limit is reached) and, even after
+    resume attempts, the model still has not emitted a text answer.
+    """
 
 STRUCTURED_SYSTEM_INSTRUCTION = """\
 You are an experienced software engineer performing a code review. Your job is to:
@@ -129,6 +138,7 @@ def review_diff_structured(
     list_directory: Callable[[str], str],
     max_diff_chars: int = 200_000,
     metrics: ReviewMetrics | None = None,
+    max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
 ) -> dict:
     """Orchestrate a structured code review of *diff* using the given LLM.
 
@@ -171,12 +181,20 @@ def review_diff_structured(
     def validate_review(json_text: str) -> str:
         return _validate_review(json_text, truncated_diff)
 
-    tools: list[Callable[..., str]] = [validate_review, read_file, list_directory]
-    raw_text = llm.review(prompt, tools)
+    tools: list[Callable[..., str]] = [
+        validate_review, read_file, list_directory
+    ]
+    raw_text = llm.review(prompt, tools, max_tool_calls=max_tool_calls)
 
     _populate_metrics(metrics, llm, diff)
 
     cleaned = _extract_json(raw_text)
+    if not cleaned:
+        raise NoReviewText(
+            "LLM returned no review text: the model ended its turn without "
+            "producing a text answer (it may have exhausted its tool-call "
+            "budget)."
+        )
     result = json.loads(cleaned)
     result["general_comment"] = (
         f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\n{result.get('general_comment', '')}"
@@ -212,6 +230,7 @@ def review_diff(
     list_directory: Callable[[str], str],
     max_diff_chars: int = 200_000,
     metrics: ReviewMetrics | None = None,
+    max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
 ) -> str:
     """Orchestrate a code review of *diff* using the given LLM.
 
@@ -237,13 +256,24 @@ def review_diff(
     str
         The formatted review comment, prefixed with the review marker.
     """
+    if _is_empty_diff(diff):
+        _populate_metrics_without_llm(metrics, llm.model, diff)
+        return f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\n{EMPTY_DIFF_GENERAL_COMMENT}"
+
     truncated_diff = _truncate_diff(diff, max_diff_chars)
     prompt = _build_prompt(truncated_diff, description)
 
     tools: list[Callable[..., str]] = [read_file, list_directory]
-    review_text = llm.review(prompt, tools)
+    review_text = llm.review(prompt, tools, max_tool_calls=max_tool_calls)
 
     _populate_metrics(metrics, llm, diff)
+
+    if not review_text:
+        raise NoReviewText(
+            "LLM returned no review text: the model ended its turn without "
+            "producing a text answer (it may have exhausted its tool-call "
+            "budget)."
+        )
 
     return f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\n{review_text}"
 
@@ -351,6 +381,9 @@ def _populate_metrics_without_llm(
     metrics.tokens_output = 0
     metrics.diff_lines = len(diff.splitlines())
     metrics.diff_size_bytes = len(diff.encode("utf-8"))
+    metrics.tool_call_limit = 0
+    metrics.tool_call_limit_reached = False
+    metrics.resume_attempts = 0
 
 
 def _populate_metrics(
@@ -363,6 +396,9 @@ def _populate_metrics(
     metrics.tokens_thinking = llm.last_tokens_thinking
     metrics.tokens_input = llm.last_tokens_input
     metrics.tokens_output = llm.last_tokens_output
+    metrics.tool_call_limit = llm.last_tool_call_limit
+    metrics.tool_call_limit_reached = llm.last_tool_call_limit_reached
+    metrics.resume_attempts = llm.last_resume_attempts
     metrics.diff_lines = len(diff.splitlines())
     metrics.diff_size_bytes = len(diff.encode("utf-8"))
 

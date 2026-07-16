@@ -20,10 +20,18 @@ class ToolCall:
 
 @dataclass
 class ScriptedResponse:
-    """A single scripted response, optionally preceded by tool calls."""
+    """A single scripted response, optionally preceded by tool calls.
 
-    text: str
+    ``text`` is the model's text answer. When ``None``, the response carries
+    no text — set ``pending_function_call`` to make it a function-call-only
+    turn (as happens when automatic function calling stops on a further tool
+    call rather than producing text), which leaves ``response.text`` as
+    ``None`` so the caller's resume logic is exercised.
+    """
+
+    text: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
+    pending_function_call: ToolCall | None = None
     tokens_input: int = 0
     tokens_output: int = 0
     tokens_thinking: int = 0
@@ -108,11 +116,21 @@ class _FakeChat:
                 )
             fn(**tc.args)
 
+        parts: list[types.Part] = []
+        if response.text is not None:
+            parts.append(types.Part(text=response.text))
+        if response.pending_function_call is not None:
+            fc = response.pending_function_call
+            parts.append(
+                types.Part(
+                    function_call=types.FunctionCall(name=fc.name, args=fc.args)
+                )
+            )
         return types.GenerateContentResponse(
             candidates=[
                 types.Candidate(
                     content=types.Content(
-                        parts=[types.Part(text=response.text)],
+                        parts=parts,
                         role="model",
                     ),
                 ),

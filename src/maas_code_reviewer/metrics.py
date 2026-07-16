@@ -17,6 +17,9 @@ class ReviewMetrics:
     agents_md_read: bool = False
     diff_lines: int = 0
     diff_size_bytes: int = 0
+    tool_call_limit: int = 0
+    tool_call_limit_reached: bool = False
+    resume_attempts: int = 0
 
 
 def write_metrics(metrics: ReviewMetrics, path: Path) -> None:
