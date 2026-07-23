@@ -1,0 +1,115 @@
+name: Manual PR Review
+
+# Manually dispatched re-review of a pull request in this repository.
+#
+# Unlike review-pr.yml (which fires automatically when a PR is opened and, by
+# design, only reviews once), this workflow can be triggered on demand from the
+# Actions tab so a fresh review can be posted after substantial follow-up
+# changes.  It takes a PR *number* (not a URL): the PR always belongs to the
+# current repository, which is the scope that the default GITHUB_TOKEN can read
+# and post to, so cross-repository review is not supported (and a 403 is not
+# possible).
+#
+# Untrusted inputs are never interpolated directly into run blocks; they are
+# passed through environment variables and read as shell variables to avoid
+# command injection.
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number in this repository to re-review"
+        required: true
+        type: number
+      model:
+        description: "Gemini model name (e.g. gemini-3.1-pro-preview, gemini-2.5-flash)"
+        required: false
+        type: string
+        default: gemini-3.1-pro-preview
+      max_tool_calls:
+        description: "Maximum automatic tool calls the LLM may make during a review"
+        required: false
+        type: number
+        default: 30
+      max_diff_chars:
+        description: "Maximum diff size in characters before truncation"
+        required: false
+        type: number
+        default: 200000
+      snap_channel:
+        description: "Snap channel from which to install maas-code-reviewer"
+        required: false
+        type: string
+        default: edge
+      dry_run:
+        description: "Print the review JSON to the workflow log instead of posting it to the PR"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  SNAP_CHANNEL: ${{ inputs.snap_channel }}
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Resolve the PR ref and full URL from the validated PR number and the
+      # current repository.  pr_number is a numeric input (GitHub validates it
+      # before the job starts), so it needs no further sanitising.
+      - name: Resolve PR ref
+        id: pr
+        env:
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "head_ref=refs/pull/$PR_NUMBER/head" >> "$GITHUB_OUTPUT"
+          echo "url=https://github.com/$REPOSITORY/pull/$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Check out PR head (for file context)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # repository defaults to the current repo; the PR ref is local to it.
+          ref: ${{ steps.pr.outputs.head_ref }}
+          persist-credentials: false
+
+      - name: Install maas-code-reviewer
+        env:
+          SNAP_CHANNEL: ${{ inputs.snap_channel }}
+        run: sudo snap install maas-code-reviewer --channel "$SNAP_CHANNEL"
+
+      - name: Run maas-code-reviewer
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+          MODEL: ${{ inputs.model }}
+          MAX_TOOL_CALLS: ${{ inputs.max_tool_calls }}
+          MAX_DIFF_CHARS: ${{ inputs.max_diff_chars }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=(
+            --model "$MODEL"
+            --max-tool-calls "$MAX_TOOL_CALLS"
+            --max-diff-chars "$MAX_DIFF_CHARS"
+            --repo-dir "$GITHUB_WORKSPACE"
+            --metrics "$RUNNER_TEMP/metrics.json"
+          )
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          maas-code-reviewer review-pr "${args[@]}" "$PR_URL"
+
+      - name: Upload metrics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: review-metrics-manual-pr${{ steps.pr.outputs.number }}
+          path: ${{ runner.temp }}/metrics.json
+          retention-days: 30
+          if-no-files-found: ignore
