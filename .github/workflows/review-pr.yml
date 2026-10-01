@@ -31,10 +31,13 @@ jobs:
     steps:
       # 1. Check out the PR HEAD so the LLM can read the actual files being
       #    reviewed via --repo-dir.  We do NOT run any code from this checkout.
+      #    It's only needed so that the LLM can read the files to get more context.
       - name: Check out PR head (for file context)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
 
       - name: Install maas-code-reviewer
         run: sudo snap install maas-code-reviewer --channel "$SNAP_CHANNEL"

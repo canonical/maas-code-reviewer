@@ -74,9 +74,11 @@ jobs:
       - name: Check out PR head (for file context)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # repository defaults to the current repo; the PR ref is local to it.
+          # Check out the PR repo so that maas-code-reviewer can read it for more context. We
+          # only ever read the files. Nothing is built or executed.
           ref: ${{ steps.pr.outputs.head_ref }}
           persist-credentials: false
+          allow-unsafe-pr-checkout: true
 
       - name: Install maas-code-reviewer
         env:
