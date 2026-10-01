@@ -38,6 +38,11 @@ from tests.fake_launchpadlib import FakeLaunchpad, make_fake_comment, make_fake_
 from tests.fake_llm import FakeLLMClient, ScriptedResponse, ToolCall
 
 
+def _prompt_text(parts: list) -> str:
+    """Join Part/str prompt elements into a single string for assertions."""
+    return "".join(getattr(p, "text", p) for p in parts)
+
+
 class TestListMergeProposals:
     def test_no_proposals(self) -> None:
         client = FakeLaunchpadClient()
@@ -1032,7 +1037,7 @@ class TestReviewMergeProposal:
 
         review_merge_proposal(lp, git, llm, mp.url)
 
-        prompt = llm._client.received_prompts[0]
+        prompt = _prompt_text(llm._client.received_prompts[0])
         assert "pass" in prompt
         assert "print" in prompt
 
@@ -1055,7 +1060,7 @@ class TestReviewMergeProposal:
 
         review_merge_proposal(lp, git, llm, mp.url)
 
-        prompt = llm._client.received_prompts[0]
+        prompt = _prompt_text(llm._client.received_prompts[0])
         assert "Fix the widget rendering bug" in prompt
 
     def test_commit_message_used_when_no_description(self, tmp_path: Path) -> None:
@@ -1078,7 +1083,7 @@ class TestReviewMergeProposal:
 
         review_merge_proposal(lp, git, llm, mp.url)
 
-        prompt = llm._client.received_prompts[0]
+        prompt = _prompt_text(llm._client.received_prompts[0])
         assert "Refactor auth module" in prompt
 
     def test_tools_provided_to_llm_can_read_files(self, tmp_path: Path) -> None:
@@ -1611,7 +1616,7 @@ class TestHandleReviewDiff:
             )
             handle_review_diff(args)
 
-        prompt = llm._client.received_prompts[0]
+        prompt = _prompt_text(llm._client.received_prompts[0])
         assert "broken" in prompt
         assert "fixed" in prompt
 
@@ -2372,7 +2377,7 @@ class TestHandleReviewPr:
         ):
             handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
 
-        prompt = llm._client.received_prompts[0]
+        prompt = _prompt_text(llm._client.received_prompts[0])
         assert "Fix the widget bug" in prompt
 
     def test_diff_passed_to_llm(self, tmp_path: Path) -> None:
@@ -2387,7 +2392,7 @@ class TestHandleReviewPr:
         ):
             handle_review_pr(self._make_args(tmp_path, repo_dir=str(tmp_path)))
 
-        prompt = llm._client.received_prompts[0]
+        prompt = _prompt_text(llm._client.received_prompts[0])
         assert "import sys" in prompt
 
     def test_max_diff_chars_truncates_diff_sent_to_llm(
@@ -2418,7 +2423,7 @@ class TestHandleReviewPr:
                 )
             )
 
-        prompt = llm._client.received_prompts[0]
+        prompt = _prompt_text(llm._client.received_prompts[0])
         assert "import sys" not in prompt
         assert "truncated" in prompt.lower()
 

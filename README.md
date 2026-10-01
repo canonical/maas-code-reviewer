@@ -174,7 +174,7 @@ maas-code-reviewer review-diff -g KEY_FILE [--model MODEL] [--repo-dir DIR] [--j
 | `DIFF_FILE` | Path to a unified diff file, or `-` to read from stdin. |
 | `-g`, `--gemini-api-key-file` | Path to file containing the Gemini API key. Falls back to `GEMINI_API_KEY` env var. |
 | `--model MODEL` | Gemini model to use (default: `gemini-3-flash-preview`). |
-| `--repo-dir DIR` | Path to the local git repository (default: current working directory). Used for `read_file` and `list_directory` tool calls. |
+| `--repo-dir DIR` | Path to the local git repository (default: current working directory). Used for `read_file` and `list_directory` tool calls, and to proactively include the repository's `AGENTS.md` (if present) in the review context. |
 | `--json-output FILE` | Write structured JSON review output to `FILE` instead of plain text to stdout. |
 | `--metrics FILE` | Write review metrics as JSON to `FILE` (see [Review Metrics](#review-metrics)). |
 
@@ -210,7 +210,7 @@ maas-code-reviewer review-pr -g KEY_FILE [--github-token TOKEN] [--model MODEL] 
 | `-g`, `--gemini-api-key-file` | Path to file containing the Gemini API key. Falls back to `GEMINI_API_KEY` env var. |
 | `--github-token TOKEN` | GitHub personal access token. Falls back to `GITHUB_TOKEN` env var. |
 | `--model MODEL` | Gemini model to use (default: `gemini-3-flash-preview`). |
-| `--repo-dir DIR` | Path to a local checkout of the repository (default: current working directory). Used for `read_file` and `list_directory` tool calls. The caller is responsible for having the repo checked out already. |
+| `--repo-dir DIR` | Path to a local checkout of the repository (default: current working directory). Used for `read_file` and `list_directory` tool calls, and to proactively include the repository's `AGENTS.md` (if present) in the review context. The caller is responsible for having the repo checked out already. |
 | `--dry-run` | Print the review JSON to stdout instead of posting it. |
 | `--metrics FILE` | Write review metrics as JSON to `FILE` (see [Review Metrics](#review-metrics)). |
 
@@ -288,7 +288,7 @@ the review completes containing usage and context metrics:
 | `tokens_input` | Number of input (prompt) tokens. |
 | `tokens_output` | Number of output (completion) tokens. |
 | `files_read` | Number of files read via the `read_file` tool during the review. |
-| `agents_md_read` | Whether an `AGENTS.md` file was read during the review. |
+| `agents_md_read` | Whether the repository's `AGENTS.md` file was included in the review (fetched proactively, or read via the `read_file` tool). |
 | `diff_lines` | Number of lines in the original diff (before any truncation). |
 | `diff_size_bytes` | Size of the original diff in bytes (UTF-8 encoded). |
 

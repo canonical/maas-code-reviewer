@@ -178,3 +178,42 @@ class TestRepoToolsMetrics:
         tools = RepoTools(tmp_path)
         tools.read_file("README.md")
         assert tools.agents_md_read is False
+
+
+class TestReadAgentsMd:
+    def test_returns_none_when_no_agents_md(self, tmp_path: Path) -> None:
+        tools = RepoTools(tmp_path)
+        assert tools.read_agents_md() is None
+        assert tools.agents_md_read is False
+
+    def test_returns_content_when_agents_md_present(self, tmp_path: Path) -> None:
+        (tmp_path / "AGENTS.md").write_text("# Rules\nBe nice.\n")
+        tools = RepoTools(tmp_path)
+        assert tools.read_agents_md() == "# Rules\nBe nice.\n"
+
+    def test_sets_agents_md_read_flag_when_present(self, tmp_path: Path) -> None:
+        (tmp_path / "AGENTS.md").write_text("# Rules")
+        tools = RepoTools(tmp_path)
+        tools.read_agents_md()
+        assert tools.agents_md_read is True
+
+    def test_does_not_increment_files_read_count(self, tmp_path: Path) -> None:
+        (tmp_path / "AGENTS.md").write_text("# Rules")
+        tools = RepoTools(tmp_path)
+        tools.read_agents_md()
+        assert tools.files_read_count == 0
+
+    def test_rejects_agents_md_symlinked_outside_repo(self, tmp_path: Path) -> None:
+        """A symlinked AGENTS.md pointing outside the repo must not be read."""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        secret = outside / "AGENTS.md"
+        secret.write_text("super-secret-api-key")
+
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        (repo_dir / "AGENTS.md").symlink_to(secret)
+
+        tools = RepoTools(repo_dir)
+        assert tools.read_agents_md() is None
+        assert tools.agents_md_read is False

@@ -44,14 +44,16 @@ class FakeGenaiClient:
     Provides a ``.chats`` attribute whose ``.create()`` method returns a
     ``_FakeChat`` that pops scripted responses.
 
-    After use, ``received_prompts`` and ``received_tools`` expose what
-    was passed to each ``send_message()`` call for assertion.
+    After use, ``received_prompts``, ``received_tools``, and
+    ``received_configs`` expose what was passed to each ``send_message()``
+    / ``chats.create()`` call for assertion.
     """
 
     def __init__(self, responses: list[ScriptedResponse] | None = None) -> None:
-        self.received_prompts: list[str] = []
+        self.received_prompts: list[Any] = []
         self.received_tools: list[list[Callable[..., str]]] = []
         self.received_raw_tools: list[list[Any]] = []
+        self.received_configs: list[types.GenerateContentConfig | None] = []
         self.chats = _FakeChats(list(responses) if responses else [], self)
 
 
@@ -98,7 +100,9 @@ class _FakeChat:
             if callable(tool):
                 self._tools_by_name[tool.__name__] = tool
 
-    def send_message(self, message: str) -> types.GenerateContentResponse:
+    def send_message(
+        self, message: str | list[Any]
+    ) -> types.GenerateContentResponse:
         self._owner.received_prompts.append(message)
         self._owner.received_tools.append(list(self._tools_by_name.values()))
         self._owner.received_raw_tools.append(list(self._all_tools))
@@ -163,4 +167,5 @@ class _FakeChats:
         model: str,
         config: types.GenerateContentConfig | None = None,
     ) -> _FakeChat:
+        self._owner.received_configs.append(config)
         return _FakeChat(self._responses, config, self._owner)

@@ -10,7 +10,7 @@ from maas_code_reviewer.reviewer import (
     EMPTY_DIFF_GENERAL_COMMENT,
     REVIEW_MARKER,
     REVIEW_PREAMBLE,
-    STRUCTURED_SYSTEM_INSTRUCTION_FOOTER,
+    STRUCTURED_SYSTEM_INSTRUCTION,
     SYSTEM_INSTRUCTION,
     TRUNCATION_MANIFEST_HEADER,
     TRUNCATION_NOTE,
@@ -51,32 +51,40 @@ def _make_list_directory(dirs: dict[str, list[str]] | None = None) -> callable:
     return list_directory
 
 
+def _prompt_text(parts: list) -> str:
+    """Join Part/str prompt elements into a single string for assertions."""
+    return "".join(getattr(p, "text", p) for p in parts)
+
+
 class TestBuildPrompt:
-    def test_contains_system_instruction(self) -> None:
+    def test_does_not_contain_system_instruction(self) -> None:
+        """The system instruction is sent via GenerateContentConfig, not here."""
         prompt = _build_prompt("some diff", None)
-        assert SYSTEM_INSTRUCTION in prompt
+        assert SYSTEM_INSTRUCTION not in _prompt_text(prompt)
 
     def test_contains_diff(self) -> None:
         prompt = _build_prompt("my-diff-content", None)
-        assert "my-diff-content" in prompt
+        assert "my-diff-content" in _prompt_text(prompt)
 
     def test_diff_wrapped_in_code_block(self) -> None:
         prompt = _build_prompt("some diff", None)
-        assert "```\nsome diff\n```" in prompt
+        assert "```\nsome diff\n```" in _prompt_text(prompt)
 
     def test_includes_description_when_provided(self) -> None:
         prompt = _build_prompt("diff", "Fix the widget")
-        assert "Fix the widget" in prompt
-        assert "## Merge Proposal Description" in prompt
+        text = _prompt_text(prompt)
+        assert "Fix the widget" in text
+        assert "## Merge Proposal Description" in text
 
     def test_no_description_section_when_none(self) -> None:
         prompt = _build_prompt("diff", None)
-        assert "## Merge Proposal Description" not in prompt
+        assert "## Merge Proposal Description" not in _prompt_text(prompt)
 
     def test_includes_instructions_section(self) -> None:
         prompt = _build_prompt("diff", None)
-        assert "## Instructions" in prompt
-        assert "provided tools" in prompt
+        text = _prompt_text(prompt)
+        assert "## Instructions" in text
+        assert "provided tools" in text
 
 
 class TestTruncateDiff:
@@ -363,7 +371,7 @@ class TestReviewDiff:
             read_file=_make_read_file(),
             list_directory=_make_list_directory(),
         )
-        assert "my-diff" in llm._client.received_prompts[0]
+        assert "my-diff" in _prompt_text(llm._client.received_prompts[0])
 
     def test_prompt_contains_description(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
@@ -374,7 +382,7 @@ class TestReviewDiff:
             read_file=_make_read_file(),
             list_directory=_make_list_directory(),
         )
-        assert "Add feature X" in llm._client.received_prompts[0]
+        assert "Add feature X" in _prompt_text(llm._client.received_prompts[0])
 
     def test_diff_truncated_when_exceeding_max(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
@@ -387,7 +395,7 @@ class TestReviewDiff:
             list_directory=_make_list_directory(),
             max_diff_chars=50,
         )
-        prompt = llm._client.received_prompts[0]
+        prompt = _prompt_text(llm._client.received_prompts[0])
         # The full 200-char diff should NOT appear
         assert "x" * 200 not in prompt
         # But the truncated portion and note should
@@ -405,7 +413,7 @@ class TestReviewDiff:
             list_directory=_make_list_directory(),
             max_diff_chars=100,
         )
-        prompt = llm._client.received_prompts[0]
+        prompt = _prompt_text(llm._client.received_prompts[0])
         assert "y" * 50 in prompt
         assert TRUNCATION_NOTE not in prompt
         assert TRUNCATION_NOTE_MID_FILE not in prompt
@@ -596,6 +604,47 @@ class TestReviewDiff:
             getattr(tool, "google_search", None) is not None for tool in raw_tools
         )
 
+    def test_system_instruction_passed_to_llm_config(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        review_diff(
+            llm,
+            diff="d",
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        config = llm._client.received_configs[0]
+        assert config.system_instruction == SYSTEM_INSTRUCTION
+
+    def test_agents_md_sent_as_extra_context_part(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        review_diff(
+            llm,
+            diff="d",
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+            agents_md="# Rules\nBe nice.",
+        )
+        message = llm._client.received_prompts[0]
+        assert isinstance(message, list)
+        assert "Be nice." in message[0].text
+        assert "```\nd\n```" in _prompt_text(message)
+
+    def test_no_agents_md_omits_extra_context_part(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        review_diff(
+            llm,
+            diff="d",
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        message = llm._client.received_prompts[0]
+        assert isinstance(message, list)
+        assert "Project conventions" not in _prompt_text(message)
+        assert "```\nd\n```" in message[0].text
+
 
 # ---------------------------------------------------------------------------
 # Helpers shared by structured-review tests
@@ -692,34 +741,34 @@ class TestExtractJson:
 
 
 class TestBuildStructuredPrompt:
-    def test_contains_structured_system_instruction(self) -> None:
+    def test_does_not_contain_structured_system_instruction(self) -> None:
+        """The system instruction is sent via GenerateContentConfig, not here."""
         prompt = _build_structured_prompt("some diff", None)
-        assert SYSTEM_INSTRUCTION in prompt
-        assert STRUCTURED_SYSTEM_INSTRUCTION_FOOTER in prompt
+        assert STRUCTURED_SYSTEM_INSTRUCTION not in _prompt_text(prompt)
 
     def test_contains_diff(self) -> None:
         prompt = _build_structured_prompt("my-diff-content", None)
-        assert "my-diff-content" in prompt
+        assert "my-diff-content" in _prompt_text(prompt)
 
     def test_diff_wrapped_in_code_block(self) -> None:
         prompt = _build_structured_prompt("some diff", None)
-        assert "```\nsome diff\n```" in prompt
+        assert "```\nsome diff\n```" in _prompt_text(prompt)
 
     def test_includes_description_when_provided(self) -> None:
         prompt = _build_structured_prompt("diff", "Fix the widget")
-        assert "Fix the widget" in prompt
+        assert "Fix the widget" in _prompt_text(prompt)
 
     def test_no_description_section_when_none(self) -> None:
         prompt = _build_structured_prompt("diff", None)
-        assert "Fix the widget" not in prompt
+        assert "Fix the widget" not in _prompt_text(prompt)
 
     def test_mentions_validate_review_tool(self) -> None:
         prompt = _build_structured_prompt("diff", None)
-        assert "validate_review" in prompt
+        assert "validate_review" in _prompt_text(prompt)
 
     def test_includes_instructions_section(self) -> None:
         prompt = _build_structured_prompt("diff", None)
-        assert "## Instructions" in prompt
+        assert "## Instructions" in _prompt_text(prompt)
 
 
 class TestReviewDiffStructured:
@@ -805,7 +854,7 @@ class TestReviewDiffStructured:
             read_file=_make_read_file(),
             list_directory=_make_list_directory(),
         )
-        assert _SIMPLE_DIFF in llm._client.received_prompts[0]
+        assert _SIMPLE_DIFF in _prompt_text(llm._client.received_prompts[0])
 
     def test_prompt_contains_description(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text=_EMPTY_INLINE_JSON_RESPONSE)])
@@ -816,7 +865,7 @@ class TestReviewDiffStructured:
             read_file=_make_read_file(),
             list_directory=_make_list_directory(),
         )
-        assert "Add sys import" in llm._client.received_prompts[0]
+        assert "Add sys import" in _prompt_text(llm._client.received_prompts[0])
 
     def test_strips_json_fence_from_response(self) -> None:
         fenced = f"```json\n{_VALID_JSON_RESPONSE}\n```"
@@ -846,7 +895,7 @@ class TestReviewDiffStructured:
         )
         # The truncated diff has no real files, so empty inline_comments is valid.
         assert isinstance(result, dict)
-        prompt = llm._client.received_prompts[0]
+        prompt = _prompt_text(llm._client.received_prompts[0])
         assert "x" * 200 not in prompt
         assert TRUNCATION_NOTE_MID_FILE in prompt
 
@@ -982,6 +1031,33 @@ class TestReviewDiffStructured:
                 read_file=_make_read_file(),
                 list_directory=_make_list_directory(),
             )
+
+    def test_system_instruction_passed_to_llm_config(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
+        review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+        )
+        config = llm._client.received_configs[0]
+        assert config.system_instruction == STRUCTURED_SYSTEM_INSTRUCTION
+
+    def test_agents_md_sent_as_extra_context_part(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text=_VALID_JSON_RESPONSE)])
+        review_diff_structured(
+            llm,
+            diff=_SIMPLE_DIFF,
+            description=None,
+            read_file=_make_read_file(),
+            list_directory=_make_list_directory(),
+            agents_md="# Rules\nBe nice.",
+        )
+        message = llm._client.received_prompts[0]
+        assert isinstance(message, list)
+        assert "Be nice." in message[0].text
+        assert _SIMPLE_DIFF in _prompt_text(message)
 
 
 class TestReviewDiffMetrics:

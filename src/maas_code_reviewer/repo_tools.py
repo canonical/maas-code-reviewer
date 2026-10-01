@@ -18,6 +18,22 @@ class RepoTools:
         self.files_read_count: int = 0
         self.agents_md_read: bool = False
 
+    def read_agents_md(self) -> str | None:
+        """Return the contents of the repo's top-level AGENTS.md, or None.
+
+        Used to proactively include project conventions in the review
+        prompt instead of relying on the model to request the file via the
+        read_file tool. Sets ``agents_md_read`` on success, matching the
+        flag set by ``read_file`` so metrics stay accurate either way.
+        """
+        target = (self._repo_dir / "AGENTS.md").resolve()
+        if not target.is_relative_to(self._repo_dir):
+            return None
+        if not target.is_file():
+            return None
+        self.agents_md_read = True
+        return target.read_text(encoding="utf-8")
+
     def read_file(self, path: str) -> str:
         print(f"Tool call: read_file(path={path!r})", file=sys.stderr)
         target = (self._repo_dir / path).resolve()

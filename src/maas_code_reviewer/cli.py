@@ -100,6 +100,7 @@ def review_merge_proposal(
         diff = git.diff(repo_dir, "ORIG_HEAD", "HEAD")
 
         tools = RepoTools(repo_dir)
+        agents_md = tools.read_agents_md()
         description = mp.description or mp.commit_message
         review_comment = review_diff(
             llm,
@@ -107,6 +108,7 @@ def review_merge_proposal(
             description=description,
             read_file=tools.read_file,
             list_directory=tools.list_directory,
+            agents_md=agents_md,
             max_diff_chars=max_diff_chars,
             metrics=metrics,
             max_tool_calls=max_tool_calls,
@@ -182,6 +184,7 @@ def handle_review_diff(args: argparse.Namespace) -> None:
     llm_client = GeminiClient(api_key=api_key, model=args.model)
 
     tools = RepoTools(repo_dir)
+    agents_md = tools.read_agents_md()
     metrics = ReviewMetrics()
 
     if args.json_output:
@@ -191,6 +194,7 @@ def handle_review_diff(args: argparse.Namespace) -> None:
             description=None,
             read_file=tools.read_file,
             list_directory=tools.list_directory,
+            agents_md=agents_md,
             max_diff_chars=args.max_diff_chars,
             metrics=metrics,
             max_tool_calls=args.max_tool_calls,
@@ -203,6 +207,7 @@ def handle_review_diff(args: argparse.Namespace) -> None:
             description=None,
             read_file=tools.read_file,
             list_directory=tools.list_directory,
+            agents_md=agents_md,
             max_diff_chars=args.max_diff_chars,
             metrics=metrics,
             max_tool_calls=args.max_tool_calls,
@@ -238,6 +243,7 @@ def handle_review_pr(args: argparse.Namespace) -> None:
 
     repo_dir = Path(args.repo_dir) if args.repo_dir else Path.cwd()
     tools = RepoTools(repo_dir)
+    agents_md = tools.read_agents_md()
 
     llm_client = GeminiClient(api_key=api_key, model=args.model)
 
@@ -248,6 +254,7 @@ def handle_review_pr(args: argparse.Namespace) -> None:
         description=description,
         read_file=tools.read_file,
         list_directory=tools.list_directory,
+        agents_md=agents_md,
         max_diff_chars=args.max_diff_chars,
         metrics=metrics,
         max_tool_calls=args.max_tool_calls,
@@ -486,7 +493,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path to the local git repository (default: current working directory). "
-            "Used for read_file and list_directory tool calls."
+            "Used for read_file and list_directory tool calls, and to proactively "
+            "include the repository's AGENTS.md (if present) in the review context."
         ),
     )
     diff_parser.add_argument(
@@ -564,7 +572,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path to a local checkout of the repository (default: current working "
-            "directory). Used for read_file and list_directory tool calls."
+            "directory). Used for read_file and list_directory tool calls, and to "
+            "proactively include the repository's AGENTS.md (if present) in the "
+            "review context. The caller is responsible for having the repo checked "
+            "out already."
         ),
     )
     pr_parser.add_argument(

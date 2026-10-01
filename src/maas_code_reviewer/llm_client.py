@@ -84,8 +84,10 @@ class GeminiClient:
 
     def review(
         self,
-        prompt: str,
+        prompt: list[Any],
         tools: list[Callable[..., Any]],
+        system_instruction: str = "",
+        agents_md: str | None = None,
         max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
     ) -> str:
         tool_entries: list[types.Tool | Callable[..., Any]] = [
@@ -93,6 +95,7 @@ class GeminiClient:
             types.Tool(google_search=types.GoogleSearch()),
         ]
         config = types.GenerateContentConfig(
+            system_instruction=system_instruction or None,
             thinking_config=types.ThinkingConfig(include_thoughts=True),
             tools=tool_entries,
             tool_config=types.ToolConfig(
@@ -112,7 +115,16 @@ class GeminiClient:
         self._last_tool_call_limit_reached = False
         self._last_resume_attempts = 0
 
-        response = chat.send_message(prompt)
+        message: list[Any] = []
+        if agents_md is not None:
+            message.append(
+                types.Part.from_text(
+                    text=f"## Project conventions (AGENTS.md)\n\n{agents_md}"
+                )
+            )
+        message.extend(prompt)
+
+        response = chat.send_message(message)
         _print_thoughts(response)
         self._add_usage(response)
 

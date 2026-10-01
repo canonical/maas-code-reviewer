@@ -99,21 +99,21 @@ class TestTokenCountProperties:
                 )
             ]
         )
-        llm.review("prompt", [])
+        llm.review(["prompt"], [])
         assert llm.last_tokens_input == 100
         assert llm.last_tokens_output == 50
         assert llm.last_tokens_thinking == 200
 
     def test_token_counts_default_to_zero(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
-        llm.review("prompt", [])
+        llm.review(["prompt"], [])
         assert llm.last_tokens_input == 0
         assert llm.last_tokens_output == 0
         assert llm.last_tokens_thinking == 0
 
     def test_token_counts_reset_when_usage_metadata_is_none(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok", no_usage_metadata=True)])
-        llm.review("prompt", [])
+        llm.review(["prompt"], [])
         assert llm.last_tokens_input == 0
         assert llm.last_tokens_output == 0
         assert llm.last_tokens_thinking == 0
@@ -126,11 +126,54 @@ class TestTokenCountProperties:
 class TestGoogleSearch:
     def test_google_search_tool_always_present(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
-        llm.review("prompt", [])
+        llm.review(["prompt"], [])
         raw_tools = llm._client.received_raw_tools[0]
         assert any(
             getattr(tool, "google_search", None) is not None for tool in raw_tools
         )
+
+
+class TestSystemInstructionAndAgentsMd:
+    def test_default_system_instruction_is_none_in_config(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        llm.review(["prompt"], [])
+        config = llm._client.received_configs[0]
+        assert config.system_instruction is None
+
+    def test_system_instruction_passed_through_to_config(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        llm.review(["prompt"], [], system_instruction="Be terse.")
+        config = llm._client.received_configs[0]
+        assert config.system_instruction == "Be terse."
+
+    def test_no_agents_md_sends_prompt_as_sole_list_element(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        llm.review(["prompt"], [])
+        assert llm._client.received_prompts[0] == ["prompt"]
+
+    def test_agents_md_wraps_prompt_in_part_list(self) -> None:
+        llm = FakeLLMClient([ScriptedResponse(text="ok")])
+        llm.review(["prompt"], [], agents_md="# Rules\nBe nice.")
+        message = llm._client.received_prompts[0]
+        assert isinstance(message, list)
+        assert "Be nice." in message[0].text
+        assert message[1] == "prompt"
+
+    def test_agents_md_not_repeated_on_resume_turn(self) -> None:
+        llm = FakeLLMClient(
+            [
+                ScriptedResponse(
+                    text=None,
+                    pending_function_call=ToolCall(
+                        name="list_directory", args={"path": "src"}
+                    ),
+                ),
+                ScriptedResponse(text="final"),
+            ]
+        )
+        llm.review(["prompt"], [], agents_md="# Rules\nBe nice.")
+        assert isinstance(llm._client.received_prompts[0], list)
+        assert llm._client.received_prompts[1] == _RESUME_PROMPT
 
 
 class TestResumeOnNoText:
@@ -149,14 +192,14 @@ class TestResumeOnNoText:
                 ScriptedResponse(text="final answer"),
             ]
         )
-        result = llm.review("prompt", [])
+        result = llm.review(["prompt"], [])
         assert result == "final answer"
-        assert llm._client.received_prompts == ["prompt", _RESUME_PROMPT]
+        assert llm._client.received_prompts == [["prompt"], _RESUME_PROMPT]
 
     def test_does_not_resume_when_text_returned(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
-        llm.review("prompt", [])
-        assert llm._client.received_prompts == ["prompt"]
+        llm.review(["prompt"], [])
+        assert llm._client.received_prompts == [["prompt"]]
 
     def test_accumulates_usage_across_resume_turns(self) -> None:
         llm = FakeLLMClient(
@@ -178,7 +221,7 @@ class TestResumeOnNoText:
                 ),
             ]
         )
-        llm.review("prompt", [])
+        llm.review(["prompt"], [])
         assert llm.last_tokens_input == 105
         assert llm.last_tokens_output == 25
         assert llm.last_tokens_thinking == 45
@@ -193,7 +236,7 @@ class TestResumeOnNoText:
             ),
         )
         llm = FakeLLMClient([no_text, no_text, no_text, no_text])
-        result = llm.review("prompt", [])
+        result = llm.review(["prompt"], [])
         assert result == ""
         assert len(llm._client.received_prompts) == 4
 
@@ -204,14 +247,14 @@ class TestToolCallTracking:
         from maas_code_reviewer.llm_client import DEFAULT_MAX_TOOL_CALLS
 
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
-        llm.review("prompt", [])
+        llm.review(["prompt"], [])
         assert llm.last_tool_call_limit == DEFAULT_MAX_TOOL_CALLS
         assert llm.last_tool_call_limit_reached is False
         assert llm.last_resume_attempts == 0
 
     def test_custom_limit_is_recorded(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
-        llm.review("prompt", [], max_tool_calls=15)
+        llm.review(["prompt"], [], max_tool_calls=15)
         assert llm.last_tool_call_limit == 15
 
     def test_limit_reached_flag_set_on_resume(self) -> None:
@@ -226,13 +269,13 @@ class TestToolCallTracking:
                 ScriptedResponse(text="ok"),
             ]
         )
-        llm.review("prompt", [])
+        llm.review(["prompt"], [])
         assert llm.last_tool_call_limit_reached is True
         assert llm.last_resume_attempts == 1
 
     def test_limit_reached_flag_false_when_text_returned(self) -> None:
         llm = FakeLLMClient([ScriptedResponse(text="ok")])
-        llm.review("prompt", [])
+        llm.review(["prompt"], [])
         assert llm.last_tool_call_limit_reached is False
         assert llm.last_resume_attempts == 0
 
@@ -250,7 +293,7 @@ class TestToolCallTracking:
                 ScriptedResponse(text="ok"),
             ]
         )
-        llm.review("prompt", [], max_tool_calls=5)
+        llm.review(["prompt"], [], max_tool_calls=5)
         err = capsys.readouterr().err
         assert "Tool-call limit (5) reached" in err
         assert "resume_attempts: 1" in err

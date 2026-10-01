@@ -4,6 +4,9 @@
 import json
 import sys
 from collections.abc import Callable
+from pathlib import Path
+
+from google.genai import types
 
 from maas_code_reviewer.llm_client import DEFAULT_MAX_TOOL_CALLS, GeminiClient
 from maas_code_reviewer.metrics import ReviewMetrics
@@ -26,68 +29,25 @@ class NoReviewText(Exception):
     resume attempts, the model still has not emitted a text answer.
     """
 
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-SYSTEM_INSTRUCTION = """\
-You are an experienced software engineer performing a code review. Your job is to:
 
-1. Identify bugs, logic errors, and potential issues.
-2. Suggest improvements for readability, maintainability, and performance.
-3. Point out any security concerns.
-4. Be constructive and specific — reference file paths and line numbers when \
-possible.
+def _load_prompt(*names: str) -> str:
+    """Load and concatenate prompt markdown files into a single string."""
+    return "\n\n".join(
+        (_PROMPTS_DIR / name).read_text(encoding="utf-8").strip() for name in names
+    )
 
-You are provided with the diff of the proposed changes. If you need more \
-context (e.g. to understand how a changed function is used elsewhere), \
-use the provided tools to read files or list directory contents in the \
-merged working tree. If the repository contains an AGENTS.md file, read it \
-and inform your review based on its instructions.
 
-You also have access to a Google Search tool. Use it to verify factual \
-claims about external libraries, APIs, frameworks, or configuration syntax \
-before raising them as issues — your training data may be out of date. When \
-you are about to flag something as invalid or unsupported, search first to \
-confirm rather than relying on memory alone.
+STRUCTURED_SYSTEM_INSTRUCTION = _load_prompt(
+    "shared_instruction.md", "structured_system_instruction.md"
+)
 
-When the diff is truncated (a truncation note and a manifest of omitted files \
-will be present), you are only seeing part of the change. Before raising any \
-concern that could be resolved by inspecting the omitted files — for example, \
-whether a complementary change exists elsewhere — use the read_file tool to \
-read the relevant omitted file(s) first. Do not ask the author to verify \
-something you can check yourself by reading the file.
+SYSTEM_INSTRUCTION = _load_prompt("shared_instruction.md", "system_instruction.md")
 
-"""
+STRUCTURED_INSTRUCTIONS = _load_prompt("structured_instructions.md")
 
-STRUCTURED_SYSTEM_INSTRUCTION_FOOTER = """\
-You MUST produce your review as a JSON object matching this schema:
-
-{
-  "general_comment": "<overall review as a string>",
-  "inline_comments": {
-    "<file path>": {
-      "<line number as string>": "<comment text>",
-      ...
-    },
-    ...
-  }
-}
-
-Rules for inline_comments:
-- Only include file paths that appear in the diff.
-- Only include line numbers that appear in the diff for that file (use the \
-new-file line numbers from the hunk headers).
-- Line numbers must be JSON string keys (e.g. "42", not 42).
-- If you have no inline comments, use an empty object {}.
-
-Before finalising your response, call the validate_review tool with your JSON \
-to check it against the schema and the diff. Fix any errors it reports and \
-re-validate until there are no errors. Then output the final JSON object and \
-nothing else.\
-"""
-
-SYSTEM_INSTRUCTION_FOOTER = """\
-Keep your review concise and actionable. Do not repeat the diff back. \
-Focus on what matters.\
-"""
+INSTRUCTIONS = _load_prompt("instructions.md")
 
 TRUNCATION_NOTE = (
     "\n\n[Note: The diff was truncated because it exceeded the maximum size. "
@@ -116,6 +76,7 @@ def review_diff_structured(
     description: str | None,
     read_file: Callable[[str], str],
     list_directory: Callable[[str], str],
+    agents_md: str | None = None,
     max_diff_chars: int = 200_000,
     metrics: ReviewMetrics | None = None,
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
@@ -140,6 +101,10 @@ def review_diff_structured(
     list_directory:
         A callable that lists directory contents in the working tree.
         Signature: ``(path: str) -> str``.
+    agents_md:
+        The contents of the repository's AGENTS.md file, if one exists, to
+        be sent to the LLM up front instead of relying on a ``read_file``
+        tool call (may be ``None``).
     max_diff_chars:
         Maximum number of characters for the diff before truncation.
 
@@ -161,8 +126,13 @@ def review_diff_structured(
     def validate_review(json_text: str) -> str:
         return _validate_review(json_text, truncated_diff)
 
-    tools: list[Callable[..., str]] = [validate_review, read_file, list_directory]
-    raw_text = llm.review(prompt, tools, max_tool_calls=max_tool_calls)
+    tools: list[Callable[..., str]] = [
+        validate_review, read_file, list_directory
+    ]
+    raw_text = llm.review(
+        prompt, tools, system_instruction=STRUCTURED_SYSTEM_INSTRUCTION,
+        agents_md=agents_md, max_tool_calls=max_tool_calls,
+    )
 
     _populate_metrics(metrics, llm, diff)
 
@@ -206,6 +176,7 @@ def review_diff(
     description: str | None,
     read_file: Callable[[str], str],
     list_directory: Callable[[str], str],
+    agents_md: str | None = None,
     max_diff_chars: int = 200_000,
     metrics: ReviewMetrics | None = None,
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
@@ -226,6 +197,10 @@ def review_diff(
     list_directory:
         A callable that lists directory contents in the merged working tree.
         Signature: ``(path: str) -> str``.
+    agents_md:
+        The contents of the repository's AGENTS.md file, if one exists, to
+        be sent to the LLM up front instead of relying on a ``read_file``
+        tool call (may be ``None``).
     max_diff_chars:
         Maximum number of characters for the diff before truncation.
 
@@ -242,7 +217,10 @@ def review_diff(
     prompt = _build_prompt(truncated_diff, description)
 
     tools: list[Callable[..., str]] = [read_file, list_directory]
-    review_text = llm.review(prompt, tools, max_tool_calls=max_tool_calls)
+    review_text = llm.review(
+        prompt, tools, system_instruction=SYSTEM_INSTRUCTION,
+        agents_md=agents_md, max_tool_calls=max_tool_calls,
+    )
 
     _populate_metrics(metrics, llm, diff)
 
@@ -256,29 +234,25 @@ def review_diff(
     return f"{REVIEW_MARKER}\n\n{REVIEW_PREAMBLE}\n\n{review_text}"
 
 
-def _build_structured_prompt(diff: str, description: str | None) -> str:
-    """Construct the prompt for structured JSON review output."""
-    parts: list[str] = [
-        SYSTEM_INSTRUCTION,
-        STRUCTURED_SYSTEM_INSTRUCTION_FOOTER,
-        "\n\n## Diff\n\n```\n",
-        diff,
-        "\n```\n",
+def _build_structured_prompt(diff: str, description: str | None) -> list[types.Part]:
+    """Construct the user-turn prompt parts for structured JSON review output.
+
+    The system instruction (persona, task, output-format rules) is sent
+    separately via ``GenerateContentConfig.system_instruction``; this returns
+    only the diff, description, and per-call instructions as ``Part``s.
+    """
+    parts: list[types.Part] = [
+        types.Part.from_text(text=f"## Diff\n\n```\n{diff}\n```\n")
     ]
 
     if description:
-        parts.append("\n## Description\n\n")
-        parts.append(description)
-        parts.append("\n")
+        parts.append(
+            types.Part.from_text(text=f"## Description\n\n{description}\n")
+        )
 
-    parts.append(
-        "\n## Instructions\n\n"
-        "Review the diff above. Use the provided tools to read files or list "
-        "directories if you need additional context. Call validate_review with "
-        "your JSON before finalising. Output only the final JSON object."
-    )
+    parts.append(types.Part.from_text(text=STRUCTURED_INSTRUCTIONS))
 
-    return "".join(parts)
+    return parts
 
 
 def _extract_json(text: str) -> str:
@@ -305,28 +279,27 @@ def _extract_json(text: str) -> str:
     return stripped
 
 
-def _build_prompt(diff: str, description: str | None) -> str:
-    """Construct the full prompt from the system instruction, diff, and description."""
-    parts: list[str] = [
-        SYSTEM_INSTRUCTION,
-        SYSTEM_INSTRUCTION_FOOTER,
-        "\n\n## Diff\n\n```\n",
-        diff,
-        "\n```\n",
+def _build_prompt(diff: str, description: str | None) -> list[types.Part]:
+    """Construct the user-turn prompt parts containing the diff and description.
+
+    The system instruction (persona, task, tool guidance) is sent
+    separately via ``GenerateContentConfig.system_instruction``; this returns
+    only the diff, description, and per-call instructions as ``Part``s.
+    """
+    parts: list[types.Part] = [
+        types.Part.from_text(text=f"## Diff\n\n```\n{diff}\n```\n")
     ]
 
     if description:
-        parts.append("\n## Merge Proposal Description\n\n")
-        parts.append(description)
-        parts.append("\n")
+        parts.append(
+            types.Part.from_text(
+                text=f"## Merge Proposal Description\n\n{description}\n"
+            )
+        )
 
-    parts.append(
-        "\n## Instructions\n\n"
-        "Review the diff above. Use the provided tools to read files or list "
-        "directories if you need additional context. Provide your review."
-    )
+    parts.append(types.Part.from_text(text=INSTRUCTIONS))
 
-    return "".join(parts)
+    return parts
 
 
 def _extract_first_json_object(text: str) -> str | None:
@@ -423,7 +396,9 @@ def _truncate_diff(diff: str, max_chars: int) -> str:
     # every fitting file in full, so no hunk is ever split.
     last_fitting_end = 0
     for i, offset in enumerate(header_offsets):
-        file_end = header_offsets[i + 1] if i + 1 < len(header_offsets) else len(diff)
+        file_end = (
+            header_offsets[i + 1] if i + 1 < len(header_offsets) else len(diff)
+        )
         if file_end <= max_chars:
             last_fitting_end = file_end
         else:
